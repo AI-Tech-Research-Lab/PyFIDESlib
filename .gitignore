@@ -1,0 +1,12 @@
+# build artifacts
+build/
+dist/
+*.egg-info/
+
+# prebuilt native module (arch/python-specific; rebuild via build.sh)
+*.so
+
+# python caches / venv
+__pycache__/
+*.py[cod]
+.venv/

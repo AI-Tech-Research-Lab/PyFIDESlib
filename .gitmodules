@@ -1,0 +1,3 @@
+[submodule "external/FIDESlib"]
+	path = external/FIDESlib
+	url = git@github.com:AI-Tech-Research-Lab/FIDESlib.git
