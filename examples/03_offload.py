@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Ciphertext offload/reload: evict a GPU-resident ciphertext to host RAM and back.
+"""Ciphertext offload/reload and reclaiming VRAM.
 
-Useful when a pipeline has more ciphertexts than fit in VRAM at once: offload the
-ones not currently needed, reload (implicitly or explicitly) right before they're
-used again. Offload/reload is a bit-exact round trip -- no decrypt, rescale, or
-NTT/domain change -- so it never changes what the ciphertext represents.
+Useful when you hold more ciphertexts than fit in VRAM at once, or want to hand some
+GPU memory back before other work: offload the ones not currently needed, reload
+(implicitly or explicitly) right before they're used again. Offload/reload is a
+bit-exact round trip -- no decrypt, rescale, or NTT/domain change -- so it never
+changes what the ciphertext represents. cc.TrimGPUMemoryPool() returns the freed
+memory to the OS (Offload() alone only pools it for reuse).
 
 Runs in seconds with <1 GB of GPU memory (toy, NON-SECURE parameters).
 """
@@ -86,5 +88,21 @@ assert ct.IsOffloaded()
 ct.Reload()
 ct.Reload()
 assert not ct.IsOffloaded()
+
+# ---------------------------------------------------------------- reclaim VRAM
+# Offload() frees the limbs into FIDESlib's internal GPU memory pool for cheap reuse,
+# but does NOT return that memory to the OS (nvidia-smi will not show a drop). When you
+# actually want the VRAM back -- e.g. before other, non-FIDESlib GPU work -- offload the
+# ciphertexts you want to keep and then trim the pool. (No trim is needed if you only
+# intend to reuse the memory for more FIDESlib ciphertexts/ops; the pool recycles it.)
+cached = [cc.Encrypt(keys.publicKey, pt_x) for _ in range(8)]
+for c in cached:
+    c.Offload()
+cc.TrimGPUMemoryPool()  # freed VRAM handed back to the system
+print("Offloaded a batch and trimmed the GPU memory pool.")
+
+# The ciphertexts are still usable afterwards -- they reload on first use.
+values = dec(cc.EvalAdd(cached[0], cached[1]))
+assert all(abs(a - 2 * b) < 1e-6 for a, b in zip(values, x))
 
 print("\nAll checks passed.")

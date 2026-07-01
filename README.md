@@ -6,21 +6,31 @@ the API needed for encrypted inference pipelines (HerMiniRocket/PolyMiniRocket):
 context setup, key generation, encoding, encrypt/decrypt, leveled arithmetic,
 rotations, `EvalChebyshevSeries`, `AccumulateSum` and bootstrapping.
 
-The compiled module **statically embeds FIDESlib and a patched OpenFHE 1.5.1**
-(from `~/Fideslib/local`). Its only runtime dependencies are the CUDA runtime
+The compiled module **statically embeds FIDESlib and a patched OpenFHE 1.5.1**.
+FIDESlib is pinned as a git submodule (`external/FIDESlib`) and built from source by
+`build.sh`, so the wrapper is tied to an exact FIDESlib commit rather than a
+machine-specific install. Its only runtime dependencies are the CUDA runtime
 (RPATH'd to `/usr/local/cuda/lib64`) and an NVIDIA GPU.
 
 ## Build
 
 ```bash
-./build.sh                          # builds against ~/HerMiniRocket/.venv python
-./build.sh /usr/bin/python3         # or any other interpreter
+git submodule update --init external/FIDESlib   # fetch the pinned FIDESlib commit
+
+# One-time: build the patched OpenFHE 1.5.1 that FIDESlib depends on (~30 min).
+( cd external/FIDESlib/deps && ./build.sh "$PWD/openfhe-install" )
+
+./build.sh                          # builds FIDESlib (from the submodule) + the wrapper
+./build.sh /usr/bin/python3         # against a specific interpreter
 ```
 
-Prereqs (already satisfied on this machine): the FIDESlib local install at
-`~/Fideslib/local` (see `~/Fideslib/CLAUDE.md`), CUDA toolkit ≥ 12.4, gcc ≥ 11,
-CMake ≥ 3.25, network access for the pybind11 fetch, and the Python dev headers
-for the chosen interpreter.
+`build.sh` compiles the pinned `external/FIDESlib` submodule into a repo-relative
+install (`external/FIDESlib/install`) and links the wrapper against it — no
+machine-specific path. Point `OPENFHE_LOCAL=<prefix>` at an existing patched
+OpenFHE 1.5.1 install to skip the one-time OpenFHE build.
+
+Prereqs: CUDA toolkit ≥ 12.4, gcc ≥ 11, CMake ≥ 3.25, network access (submodule +
+pybind11/OpenFHE fetches), and the Python dev headers for the chosen interpreter.
 
 The module is bound to the Python **minor version** it was built against
 (e.g. `_core.cpython-312-x86_64-linux-gnu.so` ⇒ Python 3.12). Rebuild to switch.
@@ -59,6 +69,24 @@ pt.SetLength(3)
 print(pt.GetRealPackedValue())
 ```
 
+## Offloading ciphertexts / reclaiming VRAM
+
+When you hold more ciphertexts than fit in VRAM, or want to free GPU memory before other
+work, evict GPU-resident ciphertexts to host RAM and bring them back on demand:
+
+```python
+ct.Offload()          # limbs -> host RAM, VRAM freed into FIDESlib's pool
+ct.IsOffloaded()      # -> True
+ct.Reload()           # limbs -> GPU (also happens automatically on first use)
+cc.TrimGPUMemoryPool()# return the freed VRAM to the OS
+```
+
+`Offload()`/`Reload()` are a bit-exact round trip (no decrypt/rescale/NTT). `Offload()` on
+its own only pools the memory for cheap reuse by later FIDESlib ops — it does **not** shrink
+the process's VRAM footprint (`nvidia-smi` shows no drop). Call `cc.TrimGPUMemoryPool()` once,
+after offloading, to actually hand that memory back to the system; skip it if you only intend
+to reuse the memory for more FIDESlib work. See `examples/03_offload.py`.
+
 ## Examples (in suggested order)
 
 | Script | What it shows | Needs |
@@ -66,6 +94,7 @@ print(pt.GetRealPackedValue())
 | `examples/00_onboarding.py` | context → keys → encrypt → add/mult/rotate/sum → decrypt | <1 GB VRAM, seconds |
 | `examples/01_chebyshev.py` | deg-31 polynomial + X4 cleaning vs CPU Clenshaw reference | ~1 GB VRAM, seconds |
 | `examples/02_step_herminirocket.py` | full Step() (Lee α=8 + 2×X4) at logN=17, **secure** params | ~2–4 GB VRAM, ~1–2 min |
+| `examples/03_offload.py` | offload/reload ciphertexts to host RAM, reclaim VRAM with `TrimGPUMemoryPool` | <1 GB VRAM, seconds |
 
 ## Coming from openfhe-python
 

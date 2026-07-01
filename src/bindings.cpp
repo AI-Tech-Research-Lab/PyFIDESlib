@@ -191,6 +191,11 @@ PYBIND11_MODULE(_core, m) {
 		.def("LoadPlaintext", &CC::LoadPlaintext, py::arg("plaintext"), nogil)
 		.def("LoadCiphertext", &CC::LoadCiphertext, py::arg("ciphertext"), nogil)
 		.def("Synchronize", &CC::Synchronize, nogil)
+		// GPU memory. Ciphertext.Offload() frees a ciphertext's limbs into FIDESlib's internal
+		// GPU memory pool -- cheap to reuse for more FIDESlib work, but NOT returned to the OS,
+		// so nvidia-smi will not show a drop. Call TrimGPUMemoryPool() once, after offloading a
+		// batch, to hand the freed VRAM back to the system for other (e.g. non-FIDESlib) use.
+		.def("TrimGPUMemoryPool", &CC::TrimGPUMemoryPool, nogil)
 		// Encoding
 		.def(
 			"MakeCKKSPackedPlaintext",
