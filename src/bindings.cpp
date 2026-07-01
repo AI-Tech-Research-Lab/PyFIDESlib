@@ -141,7 +141,15 @@ PYBIND11_MODULE(_core, m) {
 		.def("Clone", &CtI::Clone, nogil)
 		.def("GetLevel", &CtI::GetLevel)
 		.def("GetNoiseScaleDeg", &CtI::GetNoiseScaleDeg)
-		.def("SetSlots", &CtI::SetSlots, py::arg("slots"));
+		.def("SetSlots", &CtI::SetSlots, py::arg("slots"))
+		// Offload / Reload: evict this ciphertext's GPU limbs to host RAM and restore them
+		// verbatim (bit-exact; no decrypt/rescale/NTT). A no-op if not currently loaded on a
+		// device (Offload) or not currently offloaded (Reload). Every operation on the
+		// ciphertext transparently reloads it on first use, so calling Reload() explicitly is
+		// optional -- useful mainly to control when the (one-off) reload cost is paid.
+		.def("Offload", &CtI::Offload, nogil)
+		.def("Reload", &CtI::Reload, nogil)
+		.def("IsOffloaded", &CtI::IsOffloaded);
 
 	// ---- Parameters ----
 
