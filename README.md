@@ -7,30 +7,26 @@ context setup, key generation, encoding, encrypt/decrypt, leveled arithmetic,
 rotations, `EvalChebyshevSeries`, `AccumulateSum` and bootstrapping.
 
 The compiled module **statically embeds FIDESlib and a patched OpenFHE 1.5.1**.
-FIDESlib is pinned as a git submodule (`external/FIDESlib`) and built from source by
-`build.sh`, so the wrapper is tied to an exact FIDESlib commit rather than a
-machine-specific install. Its only runtime dependencies are the CUDA runtime
-(RPATH'd to `/usr/local/cuda/lib64`) and an NVIDIA GPU.
+CMake clones and compiles its own pinned copy of FIDESlib (and FIDESlib's own vendored
+OpenFHE) entirely inside `build/` -- no git submodule, no system install, no path outside
+this repo. The pin lives in `CMakeLists.txt` (`FIDESLIB_REPOSITORY`/`FIDESLIB_GIT_TAG` cache
+variables). Its only runtime dependencies are the CUDA runtime (RPATH'd to
+`/usr/local/cuda/lib64`) and an NVIDIA GPU.
 
 ## Build
 
 ```bash
-git submodule update --init external/FIDESlib   # fetch the pinned FIDESlib commit
-
-# One-time: build the patched OpenFHE 1.5.1 that FIDESlib depends on (~30 min).
-( cd external/FIDESlib/deps && ./build.sh "$PWD/openfhe-install" )
-
-./build.sh                          # builds FIDESlib (from the submodule) + the wrapper
+./build.sh                          # clones + builds FIDESlib (and its OpenFHE) + the wrapper
 ./build.sh /usr/bin/python3         # against a specific interpreter
 ```
 
-`build.sh` compiles the pinned `external/FIDESlib` submodule into a repo-relative
-install (`external/FIDESlib/install`) and links the wrapper against it — no
-machine-specific path. Point `OPENFHE_LOCAL=<prefix>` at an existing patched
-OpenFHE 1.5.1 install to skip the one-time OpenFHE build.
+First run compiles the vendored OpenFHE from scratch (~10-30 min); later runs are fast since
+it's only rebuilt when missing. To pin a different FIDESlib commit or fork, pass
+`-DFIDESLIB_REPOSITORY=... -DFIDESLIB_GIT_TAG=...` to the `cmake -B build` step in `build.sh`,
+or edit the defaults in `CMakeLists.txt`.
 
-Prereqs: CUDA toolkit ≥ 12.4, gcc ≥ 11, CMake ≥ 3.25, network access (submodule +
-pybind11/OpenFHE fetches), and the Python dev headers for the chosen interpreter.
+Prereqs: CUDA toolkit ≥ 12.4, gcc ≥ 11, CMake ≥ 3.25, network access (FIDESlib/OpenFHE/pybind11
+fetches), and the Python dev headers for the chosen interpreter.
 
 The module is bound to the Python **minor version** it was built against
 (e.g. `_core.cpython-312-x86_64-linux-gnu.so` ⇒ Python 3.12). Rebuild to switch.
@@ -38,7 +34,7 @@ The module is bound to the Python **minor version** it was built against
 ## Use
 
 ```bash
-export PYTHONPATH=$HOME/Fideslib/pyfideslib    # or sys.path.insert / pip install -e
+export PYTHONPATH=/path/to/PyFIDESlib          # or sys.path.insert / pip install -e
 python examples/00_onboarding.py
 ```
 
