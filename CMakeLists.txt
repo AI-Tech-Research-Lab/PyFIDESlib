@@ -10,7 +10,7 @@ include(FetchContent)
 # exact commit. No system install, no external fideslib_DIR, no path outside this repo -- override
 # FIDESLIB_REPOSITORY/FIDESLIB_GIT_TAG to point at a fork or a different pinned commit.
 set(FIDESLIB_REPOSITORY "git@github.com:AI-Tech-Research-Lab/FIDESlib.git" CACHE STRING "Git remote for the FIDESlib core library.")
-set(FIDESLIB_GIT_TAG "a8f31120140e740e7479d55365ec09535e701abf" CACHE STRING "Pinned FIDESlib commit (fix: NaN when chaining an op off a ciphertext from a preceding mult).")
+set(FIDESLIB_GIT_TAG "d1bf12fc27c713daa760aa898472bf35e55aa769" CACHE STRING "Pinned FIDESlib commit (fix: fence the aux-poly pool against recycle-while-hot races).")
 
 # Library only: skip FIDESlib's own test/benchmark suites (and their gtest/benchmark fetches).
 set(FIDESLIB_COMPILE_TESTS OFF CACHE BOOL "" FORCE)
