@@ -10,7 +10,7 @@ include(FetchContent)
 # exact commit. No system install, no external fideslib_DIR, no path outside this repo -- override
 # FIDESLIB_REPOSITORY/FIDESLIB_GIT_TAG to point at a fork or a different pinned commit.
 set(FIDESLIB_REPOSITORY "git@github.com:AI-Tech-Research-Lab/FIDESlib.git" CACHE STRING "Git remote for the FIDESlib core library.")
-set(FIDESLIB_GIT_TAG "57e4bb25028555e099eadf563f806b0de15126a9" CACHE STRING "Pinned FIDESlib commit (race-hunt instrumentation reverted; corruption was CKKS K-overflow, fixed client-side).")
+set(FIDESLIB_GIT_TAG "acc16a4f2ec984e040d5d7dee2b27a9023ed3c35" CACHE STRING "Pinned FIDESlib commit (rebased on upstream 2.1.3: their Issue-#27 key-switch fix, our NaN workarounds dropped).")
 
 # Library only: skip FIDESlib's own test/benchmark suites (and their gtest/benchmark fetches).
 set(FIDESLIB_COMPILE_TESTS OFF CACHE BOOL "" FORCE)
@@ -20,6 +20,9 @@ FetchContent_Declare(
     fideslib
     GIT_REPOSITORY ${FIDESLIB_REPOSITORY}
     GIT_TAG        ${FIDESLIB_GIT_TAG}
+    # No submodule init: upstream history pins an unfetchable openfhe commit (31c9304) that makes
+    # recursive fetches fail; FIDESlib's own deps/build.sh inits the submodule itself (--remote).
+    GIT_SUBMODULES ""
 )
 FetchContent_MakeAvailable(fideslib)
 
