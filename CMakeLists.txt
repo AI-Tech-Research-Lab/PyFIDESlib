@@ -10,7 +10,7 @@ include(FetchContent)
 # exact commit. No system install, no external fideslib_DIR, no path outside this repo -- override
 # FIDESLIB_REPOSITORY/FIDESLIB_GIT_TAG to point at a fork or a different pinned commit.
 set(FIDESLIB_REPOSITORY "git@github.com:AI-Tech-Research-Lab/FIDESlib.git" CACHE STRING "Git remote for the FIDESlib core library.")
-set(FIDESLIB_GIT_TAG "acc16a4f2ec984e040d5d7dee2b27a9023ed3c35" CACHE STRING "Pinned FIDESlib commit (rebased on upstream 2.1.3: their Issue-#27 key-switch fix, our NaN workarounds dropped).")
+set(FIDESLIB_GIT_TAG "4cc0ef5011c5c7f74ff818054e3a1e20fa59f73f" CACHE STRING "Pinned FIDESlib commit (bounded auxiliary-polynomial cache and allocator telemetry).")
 
 # Library only: skip FIDESlib's own test/benchmark suites (and their gtest/benchmark fetches).
 set(FIDESLIB_COMPILE_TESTS OFF CACHE BOOL "" FORCE)
@@ -27,6 +27,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(fideslib)
 
 find_package(OpenMP REQUIRED)
+find_package(CUDAToolkit REQUIRED)
 
 # pybind11 (self-contained fetch, no system install needed)
 set(PYBIND11_FINDPYTHON ON)  # use modern FindPython, honors -DPython_EXECUTABLE
@@ -39,7 +40,17 @@ FetchContent_MakeAvailable(pybind11)
 
 pybind11_add_module(_core src/bindings.cpp)
 
-target_link_libraries(_core PRIVATE fideslib OpenMP::OpenMP_CXX)
+target_include_directories(_core PRIVATE
+    "${fideslib_SOURCE_DIR}/src"
+    "${fideslib_SOURCE_DIR}/deps/openfhe-install/include/openfhe"
+    "${fideslib_SOURCE_DIR}/deps/openfhe-install/include/openfhe/core"
+    "${fideslib_SOURCE_DIR}/deps/openfhe-install/include/openfhe/pke"
+    "${fideslib_SOURCE_DIR}/deps/openfhe-install/include/openfhe/binfhe"
+    "${fideslib_SOURCE_DIR}/deps/openfhe-install/include/openfhe/third-party/include"
+)
+target_compile_definitions(_core PRIVATE MULTI_GPU NCCL RCCL)
+
+target_link_libraries(_core PRIVATE fideslib OpenMP::OpenMP_CXX CUDA::cudart)
 
 set_target_properties(_core PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/fideslib_py"

@@ -16,6 +16,9 @@
 #include <pybind11/stl.h>
 
 #include <fideslib.hpp>
+#include "CudaUtils.cuh"
+#include "CKKS/Context.cuh"
+#include <cuda_runtime_api.h>
 
 #include <bit>
 #include <sstream>
@@ -53,6 +56,29 @@ std::vector<int> AccumulateRotationIndices(int slots, int stride, int bStep) {
 
 PYBIND11_MODULE(_core, m) {
 	m.doc() = "Python bindings for FIDESlib (CKKS on GPU, interoperable with OpenFHE)";
+
+	m.def("GetGPUMemoryPoolStats", [](int device) {
+		py::list buckets;
+		for (const auto& stat : FIDESlib::GPUmemoryPoolStats(device)) {
+			py::dict row;
+			row["chunk_bytes"] = stat.chunkBytes;
+			row["slab_count"] = stat.slabCount;
+			row["reserved_bytes"] = stat.reservedBytes;
+			row["total_chunks"] = stat.totalChunks;
+			row["free_chunks"] = stat.freeChunks;
+			row["live_chunks"] = stat.liveChunks;
+			buckets.append(std::move(row));
+		}
+		size_t freeBytes = 0, totalBytes = 0;
+		cudaSetDevice(device);
+		cudaMemGetInfo(&freeBytes, &totalBytes);
+		py::dict result;
+		result["device"] = device;
+		result["cuda_free_bytes"] = freeBytes;
+		result["cuda_total_bytes"] = totalBytes;
+		result["buckets"] = std::move(buckets);
+		return result;
+	}, py::arg("device") = 0);
 
 	// ---- Enums ----
 
@@ -196,6 +222,20 @@ PYBIND11_MODULE(_core, m) {
 		// so nvidia-smi will not show a drop. Call TrimGPUMemoryPool() once, after offloading a
 		// batch, to hand the freed VRAM back to the system for other (e.g. non-FIDESlib) use.
 		.def("TrimGPUMemoryPool", &CC::TrimGPUMemoryPool, nogil)
+		.def("GetDeviceObjectCounts", [](const CC& cc) {
+			py::dict result;
+			result["ciphertexts"] = cc.device_ciphertexts.size();
+			result["plaintexts"] = cc.device_plaintexts.size();
+			return result;
+		})
+		.def("GetAuxiliaryPolyPoolSize", [](CC& cc) {
+			auto& gpu = std::any_cast<FIDESlib::CKKS::Context&>(cc.gpu);
+			return gpu->precom.auxPoly.size();
+		})
+		.def("ClearAuxiliaryPolyPool", [](CC& cc) {
+			auto& gpu = std::any_cast<FIDESlib::CKKS::Context&>(cc.gpu);
+			gpu->clearAuxilarPoly();
+		})
 		// Encoding
 		.def(
 			"MakeCKKSPackedPlaintext",

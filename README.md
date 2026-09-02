@@ -83,6 +83,18 @@ the process's VRAM footprint (`nvidia-smi` shows no drop). Call `cc.TrimGPUMemor
 after offloading, to actually hand that memory back to the system; skip it if you only intend
 to reuse the memory for more FIDESlib work. See `examples/03_offload.py`.
 
+FIDESlib also has a higher-level cache of destroyed ciphertext polynomials. It can help
+regular create/destroy workloads, but its upstream-unbounded behavior may strand many GiB
+that plaintext and other allocation paths cannot reuse. Set its maximum retained polynomial
+count before starting Python; `0` disables only this upper cache while the lower limb
+allocator continues to reuse GPU buffers:
+
+```bash
+export FIDESLIB_AUX_POLY_CACHE_LIMIT=0
+```
+
+If the variable is absent or invalid, the original unbounded behavior is retained.
+
 ## Examples (in suggested order)
 
 | Script | What it shows | Needs |
