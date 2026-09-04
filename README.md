@@ -156,6 +156,63 @@ Two things to know:
 indexes are ignored. `tests/test_rotation_key_cache.py` (`--all`, one subprocess per case)
 exercises all of the above end to end.
 
+### Bounding plaintext VRAM
+
+A plaintext uploads to the GPU the first time an op uses it and then stays there until its
+`Plaintext` object is destroyed, so a host-side plaintext pool — masks, weights, convolution
+kernels — pins one device copy per entry. Measured: `(L+1) x N x 8` bytes each (896 KiB at
+logN=14/L=6, 6 MiB at logN=16/L=11), so a few thousand of them is tens of GiB of VRAM held
+for the whole run. Same idea as above, with a byte budget:
+
+```python
+cc.SetPlaintextCache(2 * 1024**3)    # keep plaintexts under 2 GiB -- any time, before or after LoadContext
+cc.GetPlaintextCache()               # the budget (None = unlimited, the default)
+cc.GetPlaintextCacheResidentBytes()  # VRAM the resident plaintexts actually occupy
+pt.IsLoadedOnDevice()                # does this plaintext have a GPU copy right now?
+cc.PinPlaintext(pt)                  # never evict a hot plaintext (pin=False to unpin)
+pt.UnloadFromDevice()                # drop this one now
+cc.OffloadPlaintexts()               # drop every unpinned one now
+cc.SetPlaintextCache(None)           # back to unlimited
+```
+
+Everything keeps working after an eviction: the next op that needs the plaintext re-uploads it
+from the encoding its `Plaintext` carries anyway. That is the reason this cache is much cheaper
+than the rotation-key one — a plaintext is **read-only in every op that takes one**, so eviction
+is a plain free (no host snapshot, no device sync, no extra host RAM) and a miss is one
+host-to-device copy of unchanged data. Measured on 128 plaintexts at logN=14: under a budget of
+four, 7.4 MB of live VRAM instead of 122 MB, with identical results.
+
+Two more differences from the rotation-key cache:
+
+- **The budget can be set at any time**, and tightening it evicts immediately — there is nothing
+  to arrange before `LoadContext()`.
+- **The budget belongs to the `CryptoContext` object**, not to the shared GPU context, so two
+  contexts built from identical parameters keep independent budgets and independent accounting.
+
+The budget is **soft** in three ways: a plaintext's size is only known once it is built, so a
+load overshoots by that one plaintext before the cache re-shrinks; an op that holds several
+plaintexts at once (the convolution transforms fetch a whole batch before launching anything)
+keeps all of them until it returns; and a budget smaller than a single plaintext still keeps the
+one in use. Pinned plaintexts are never evicted, and only the plaintexts you create are
+cached — the ones inside the bootstrapping precomputation belong to the GPU context and are
+untouched.
+
+Note that the freed VRAM goes back to FIDESlib's allocator pool, not to the driver, so
+`nvidia-smi` and `cudaMemGetInfo` will not show a drop — and `TrimGPUMemoryPool()` only returns
+whole idle slabs (measured: it did not move the reserved total at all after 32 plaintext loads).
+Use `GetPlaintextCacheResidentBytes()`, or the pool's own live-chunk view, to see the cache
+working:
+
+```python
+stats = fhe.GetGPUMemoryPoolStats(0)
+live = sum(b["live_chunks"] * b["chunk_bytes"] for b in stats["buckets"])
+```
+
+`tests/test_plaintext_cache.py` (`--all`, one subprocess per case) covers the byte accounting
+against that allocator view, LRU order, pinning, manual offload, runtime budget changes,
+plaintext lifetime vs the bookkeeping, per-context independence, the real VRAM cap and a
+no-leak run over 240 forced misses.
+
 ## Examples (in suggested order)
 
 | Script | What it shows | Needs |

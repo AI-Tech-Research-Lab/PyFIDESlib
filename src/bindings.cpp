@@ -157,6 +157,10 @@ PYBIND11_MODULE(_core, m) {
 				}
 			},
 			nogil)
+		// Whether this plaintext currently holds a GPU copy. False before its first use
+		// (plaintexts upload lazily), after UnloadFromDevice(), and after the plaintext
+		// cache evicted it -- in every case the next operation re-uploads it.
+		.def("IsLoadedOnDevice", [](const PlaintextImpl& pt) { return pt.loaded; })
 		.def("__str__", [](const PlaintextImpl& pt) {
 			std::ostringstream os;
 			os << pt;
@@ -281,6 +285,48 @@ PYBIND11_MODULE(_core, m) {
 		.def("OffloadRotationKeys", &CC::OffloadRotationKeys, py::arg("indexes") = std::vector<int>{}, nogil)
 		// Keep a hot key (e.g. the stride used by every AccumulateSum) permanently resident.
 		.def("PinRotationKey", &CC::PinRotationKey, py::arg("index"), py::arg("pin") = true, nogil)
+		// Plaintext VRAM cache. A plaintext uploads to the GPU on its first use in an op and
+		// then stays there until it is destroyed, so a host-side plaintext pool (masks,
+		// weights, convolution kernels) pins one device copy per entry -- tens of GB for a
+		// few thousand plaintexts at logN=16. A byte budget keeps only the most recently used
+		// ones resident and drops the rest; the next op that needs one re-uploads it from the
+		// host-side encoding the Plaintext carries anyway (a few ms), so a miss costs one
+		// host->device copy of unchanged data and nothing else -- plaintexts are read-only in
+		// every op that takes one, which is why (unlike a ciphertext) eviction needs no
+		// snapshot, no device sync and no host RAM.
+		//
+		// Unlike SetRotationKeyCache(), this can be called at any point, before or after
+		// LoadContext(), and tightening it evicts immediately. `None` = unlimited (default).
+		//
+		// The budget is soft in three ways: a plaintext's size is only known once it is
+		// built, so a load overshoots by that one plaintext before the cache re-shrinks; an
+		// op holding several plaintexts at once (the convolution transforms) keeps its whole
+		// batch resident until it returns; and a budget below one plaintext still keeps the
+		// one in use. Only plaintexts you create are cached -- the plaintexts inside the
+		// bootstrapping precomputation belong to the GPU context and are not affected.
+		.def(
+			"SetPlaintextCache",
+			[](CC& cc, std::optional<size_t> nbytes) { cc.SetPlaintextCache(nbytes.value_or(SIZE_MAX)); },
+			py::arg("nbytes"), nogil)
+		.def(
+			"GetPlaintextCache",
+			[](const CC& cc) -> std::optional<size_t> {
+				size_t b = cc.GetPlaintextCache();
+				return b == SIZE_MAX ? std::nullopt : std::optional<size_t>(b);
+			})
+		// VRAM currently held by device plaintexts -- tracked with or without a budget, so it
+		// also answers "how much VRAM are my plaintexts holding?". Use this rather than
+		// nvidia-smi: an eviction returns the limbs to FIDESlib's pool, not to the driver,
+		// and TrimGPUMemoryPool() only hands back whole idle slabs (measured: it did not move
+		// the reserved total at all after 32 plaintext loads). GetGPUMemoryPoolStats()'s
+		// per-bucket live_chunks x chunk_bytes is the allocator's own view of the same thing.
+		.def("GetPlaintextCacheResidentBytes", &CC::GetPlaintextCacheResidentBytes)
+		// Drop every unpinned device plaintext now rather than waiting for the budget to
+		// force it. The Plaintexts stay usable; the next op re-uploads what it needs.
+		.def("OffloadPlaintexts", &CC::OffloadPlaintexts, nogil)
+		// Keep a hot plaintext (e.g. a mask every layer multiplies by) permanently resident,
+		// loading it now if needed. Unpinning lets the budget bind again.
+		.def("PinPlaintext", &CC::PinPlaintext, py::arg("plaintext"), py::arg("pin") = true, nogil)
 		// Encoding
 		.def(
 			"MakeCKKSPackedPlaintext",
