@@ -8,7 +8,8 @@ behaviour broke instead of killing the whole run. A crash is reported as `exit=-
     python tests/test_rotation_key_cache.py --scenario lru
     RKTEST_BOOTSTRAP=1 python tests/test_rotation_key_cache.py --scenario bootstrap
 
-Env: RKTEST_DEVICE (GPU index), RKTEST_RING (log2 ring dim, default 13).
+Env: RKTEST_DEVICE (physical GPU index, exported as CUDA_VISIBLE_DEVICES so the process
+only ever touches that one GPU), RKTEST_RING (log2 ring dim, default 13).
 """
 
 from __future__ import annotations
@@ -23,9 +24,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Confine the process to ONE physical GPU before the module is imported: importing it
+# initializes CUDA on every visible device (and FIDESlib then allocates there).
+# Already-set CUDA_VISIBLE_DEVICES is left alone, so the `--all` subprocesses inherit it.
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", os.environ.get("RKTEST_DEVICE", "0"))
+
 import fideslib_py as fhe  # noqa: E402
 
-DEVICE = int(os.environ.get("RKTEST_DEVICE", "0"))
+DEVICE = 0  # index within CUDA_VISIBLE_DEVICES, i.e. the one GPU selected above
 RING = int(os.environ.get("RKTEST_RING", "13"))
 BATCH = 1 << (RING - 1)
 ROT_IDXS = [1, 2, 3, 5, 8, 13, 21, 34]
