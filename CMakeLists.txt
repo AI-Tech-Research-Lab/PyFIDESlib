@@ -9,8 +9,21 @@ include(FetchContent)
 # FIDESlib (a.k.a. OurFIDESlib): cloned and built entirely inside this build tree, pinned to an
 # exact commit. No system install, no external fideslib_DIR, no path outside this repo -- override
 # FIDESLIB_REPOSITORY/FIDESLIB_GIT_TAG to point at a fork or a different pinned commit.
-set(FIDESLIB_REPOSITORY "git@github.com:AI-Tech-Research-Lab/FIDESlib.git" CACHE STRING "Git remote for the FIDESlib core library.")
-set(FIDESLIB_GIT_TAG "70731fb7332b49d70a9bc17bd6507742971de8fb" CACHE STRING "Pinned FIDESlib commit (bounded auxiliary-polynomial cache, allocator telemetry, Stream::init CUDA-event leak fix).")
+#
+# These defaults are deliberately NOT CACHE variables: a cached entry takes precedence over the
+# set() below, so bumping the pin here would silently do nothing on an existing build tree (the
+# fetched copy stays on the old commit and the wrapper then fails to compile against it). Passing
+# -DFIDESLIB_GIT_TAG=... still works and does create a cache entry -- which then shadows this line
+# until you clear it with `cmake -B build -U FIDESLIB_GIT_TAG`.
+if (NOT DEFINED FIDESLIB_REPOSITORY)
+    set(FIDESLIB_REPOSITORY "git@github.com:AI-Tech-Research-Lab/FIDESlib.git")
+endif ()
+if (NOT DEFINED FIDESLIB_GIT_TAG)
+    # rotation-key VRAM cache with an LRU byte budget + the LoadContext fix it needs: keys were
+    # built against a local Context that got moved into the std::any, so a key that reloads
+    # itself under a budget dereferenced freed memory (SIGSEGV on the first lazy rotation).
+    set(FIDESLIB_GIT_TAG "66bfa0001204fbc7f113f271db2b8fb9f4f67494")
+endif ()
 
 # Library only: skip FIDESlib's own test/benchmark suites (and their gtest/benchmark fetches).
 set(FIDESLIB_COMPILE_TESTS OFF CACHE BOOL "" FORCE)
