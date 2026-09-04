@@ -9,8 +9,9 @@ rotations, `EvalChebyshevSeries`, `AccumulateSum` and bootstrapping.
 The compiled module **statically embeds FIDESlib and a patched OpenFHE 1.5.1**.
 CMake clones and compiles its own pinned copy of FIDESlib (and FIDESlib's own vendored
 OpenFHE) entirely inside `build/` -- no git submodule, no system install, no path outside
-this repo. The pin lives in `CMakeLists.txt` (`FIDESLIB_REPOSITORY`/`FIDESLIB_GIT_TAG` cache
-variables). Its only runtime dependencies are the CUDA runtime (RPATH'd to
+this repo. The pin lives in `CMakeLists.txt` (`FIDESLIB_REPOSITORY`/`FIDESLIB_GIT_TAG`; edit
+the defaults there, or pass them with `-D` to define cache entries that shadow the defaults).
+Its only runtime dependencies are the CUDA runtime (RPATH'd to
 `/usr/local/cuda/lib64`) and an NVIDIA GPU.
 
 ## Build
@@ -94,6 +95,66 @@ export FIDESLIB_AUX_POLY_CACHE_LIMIT=0
 ```
 
 If the variable is absent or invalid, the original unbounded behavior is retained.
+
+### Bounding rotation-key VRAM
+
+Rotation keys are usually the largest permanent VRAM tenant — measured with `dnum=3`: 3.8 MiB
+per key at logN=13/L=6, 24 MiB at logN=15/L=11, 132 MiB at logN=17/L=15 — and a bootstrappable
+context needs hundreds of them — 300 keys at logN=17 alone is ~39 GiB. Give them a byte budget
+and only the most
+recently used ones stay on the GPU; the rest are parked in host RAM and reloaded on demand. A
+miss costs one host-to-device copy.
+
+```python
+cc = fhe.GenCryptoContext(params)
+...
+keys = cc.KeyGen()
+cc.EvalRotateKeyGen(keys.secretKey, [1, 2, 3, 4])
+cc.SetRotationKeyCache(4 * 1024**3)   # keep rotation keys under 4 GiB -- BEFORE LoadContext
+cc.LoadContext(keys.publicKey)        # keys are now created VRAM-free, loading on first use
+
+cc.GetRotationKeyCacheResidentBytes()  # VRAM the resident keys actually occupy
+cc.GetRotationKeyCache()               # the budget (None = unlimited, the default)
+cc.IsRotationKeyResident(1)            # is the key for rotation index 1 on the GPU?
+cc.PinRotationKey(1)                   # never evict a hot key (pin=False to unpin)
+cc.OffloadRotationKeys([2, 3])         # evict now instead of waiting for the budget
+cc.OffloadRotationKeys()               # ... all of them
+cc.SetRotationKeyCache(2 * 1024**3)   # retighten at runtime: evicts down immediately
+cc.SetRotationKeyCache(None)           # back to unlimited (every key permanently resident)
+```
+
+**Set the budget before `LoadContext()`.** Only keys *created* while a finite budget is in
+force keep the host-RAM snapshot that offload/reload round-trips through — and they allocate
+no VRAM at all until first used. Keys built with an unlimited budget have no snapshot, so the
+cache treats them as pinned forever. There is no way to add rotation keys after the load
+either: `EvalRotateKeyGen`, `EvalMultKeyGen`, `EvalBootstrapSetup`, `EvalBootstrapKeyGen` and
+the `Deserialize*Key` calls all throw once the context is loaded. Calling `SetRotationKeyCache`
+afterwards therefore does not make anything offloadable; it only re-tunes the live budget (and
+thus evicts) for keys that already have snapshots.
+
+The budget is **soft**. Ops that need several keys at once — hoisted rotation, the bootstrap
+linear transforms — fetch them all before launching anything (an eviction in between would
+free a key whose kernels have not been enqueued yet), so they transiently overshoot and the
+cache shrinks back on the next load. Measured: plain `EvalRotate` under a one-key budget stays
+at exactly one resident key (evict-before-load), while `AccumulateSum(ct, 64)` holds its whole
+hoisted batch — 9 keys — whatever the budget says. Budget it to comfortably exceed your largest
+such working set, or rotation-heavy code will thrash.
+
+Two things to know:
+
+- **Reload is lossless; rotations are not bit-reproducible anyway.** Offload/reload restores
+  the key limbs verbatim, but FIDESlib rotations differ by ~1e-10 run to run at logN=13 even
+  with no cache involved (multi-stream reductions), so validate cold-vs-warm results against
+  that floor rather than `==`.
+- **The budget belongs to the GPU context, not to the `CryptoContext` object.** FIDESlib caches
+  GPU contexts by parameters, so two contexts built from *identical* params share one —
+  including its budget, its LRU list and its resident-byte counter, and a second
+  `LoadContext()` silently replaces the first one's budget. Give concurrently loaded contexts
+  different parameters if you want independent budgets.
+
+`OffloadRotationKeys`/`PinRotationKey` throw if the context is not loaded; unknown rotation
+indexes are ignored. `tests/test_rotation_key_cache.py` (`--all`, one subprocess per case)
+exercises all of the above end to end.
 
 ## Examples (in suggested order)
 

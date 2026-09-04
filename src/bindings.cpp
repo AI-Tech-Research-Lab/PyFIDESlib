@@ -21,6 +21,8 @@
 #include <cuda_runtime_api.h>
 
 #include <bit>
+#include <cstdint>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -236,6 +238,49 @@ PYBIND11_MODULE(_core, m) {
 			auto& gpu = std::any_cast<FIDESlib::CKKS::Context&>(cc.gpu);
 			gpu->clearAuxilarPoly();
 		})
+		// Rotation-key VRAM cache. Rotation keys are by far the largest permanent VRAM
+		// tenant (3.8 MiB/key at logN=13 L=6 dnum=3, 24 MiB at logN=15 L=11, 132 MiB at
+		// logN=17 L=15; a bootstrappable context needs hundreds). A byte budget keeps only the
+		// most recently used ones on the GPU and parks the rest in host RAM, reloading them on
+		// demand: the reload is lossless, a miss costs one host->device copy. (Rotations are
+		// not bit-reproducible run to run even untouched -- ~1e-10 at logN=13 -- so compare a
+		// cold result against that floor, not with ==.)
+		//
+		// SetRotationKeyCache() MUST be called before LoadContext(): only keys created while a
+		// finite budget is in force keep the host-RAM snapshot that offload/reload needs (and
+		// they allocate no VRAM at all until first used); keys built with an unlimited budget
+		// have no snapshot and are treated as pinned forever. Nothing can be added after the
+		// load either -- EvalRotateKeyGen/EvalMultKeyGen/EvalBootstrapSetup/EvalBootstrapKeyGen
+		// all throw once loaded -- so a later call only re-tunes the live budget (evicting
+		// immediately) for keys that already have snapshots. `None` = unlimited (the default).
+		//
+		// The budget is soft: ops that fetch several keys before launching anything (hoisted
+		// rotation, the bootstrap linear transforms) hold them all and overshoot it -- plain
+		// EvalRotate does not, it evicts before loading. The cache re-shrinks on the next load.
+		//
+		// Note the budget lives in the FIDESlib GPU ContextData, which is shared by every
+		// CryptoContextImpl with identical Parameters: GetRotationKeyCache() reports this
+		// object's own value, while eviction and the resident-byte counter follow whatever the
+		// last LoadContext() pushed onto the shared context.
+		.def(
+			"SetRotationKeyCache",
+			[](CC& cc, std::optional<size_t> nbytes) { cc.SetRotationKeyCache(nbytes.value_or(SIZE_MAX)); },
+			py::arg("nbytes"), nogil)
+		.def(
+			"GetRotationKeyCache",
+			[](const CC& cc) -> std::optional<size_t> {
+				size_t b = cc.GetRotationKeyCache();
+				return b == SIZE_MAX ? std::nullopt : std::optional<size_t>(b);
+			})
+		// VRAM currently held by resident rotation keys -- compare against the budget to see
+		// whether the cache is actually binding.
+		.def("GetRotationKeyCacheResidentBytes", &CC::GetRotationKeyCacheResidentBytes)
+		.def("IsRotationKeyResident", &CC::IsRotationKeyResident, py::arg("index"))
+		// Evict now rather than waiting for the budget to force it; empty list = every key.
+		// Keys created without a budget in force (see above) and pinned keys are skipped.
+		.def("OffloadRotationKeys", &CC::OffloadRotationKeys, py::arg("indexes") = std::vector<int>{}, nogil)
+		// Keep a hot key (e.g. the stride used by every AccumulateSum) permanently resident.
+		.def("PinRotationKey", &CC::PinRotationKey, py::arg("index"), py::arg("pin") = true, nogil)
 		// Encoding
 		.def(
 			"MakeCKKSPackedPlaintext",
