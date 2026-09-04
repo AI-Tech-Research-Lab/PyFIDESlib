@@ -327,6 +327,38 @@ PYBIND11_MODULE(_core, m) {
 		// Keep a hot plaintext (e.g. a mask every layer multiplies by) permanently resident,
 		// loading it now if needed. Unpinning lets the budget bind again.
 		.def("PinPlaintext", &CC::PinPlaintext, py::arg("plaintext"), py::arg("pin") = true, nogil)
+		// Ciphertext VRAM cache. Same shape as the plaintext one, but this is the expensive
+		// one: evicting a ciphertext synchronizes the device and copies its limbs to host RAM
+		// (Ciphertext.Offload()), reloading copies them back, and the host snapshot costs as
+		// much RAM as the ciphertext did VRAM. It is how you survive a working set that does
+		// not fit in VRAM, not how you go faster -- where the dataflow is known, offload
+		// explicitly with ct.Offload() instead (see examples/03_offload.py). The round trip is
+		// bit-exact and every op reloads what it needs, so it stays transparent.
+		//
+		// The budget is enforced at op boundaries only -- at the LoadCiphertext() every op
+		// performs on its operands before touching any GPU pointer -- so ciphertexts created
+		// *during* an op (its result, or the whole batch a hoisted rotation builds) are
+		// counted but only evicted once the next op starts: expect an overshoot of one op's
+		// working set. Pinned ciphertexts are never evicted, nor is one caught mid-key-switch
+		// in the extended basis. `None` = unlimited (the default).
+		.def(
+			"SetCiphertextCache",
+			[](CC& cc, std::optional<size_t> nbytes) { cc.SetCiphertextCache(nbytes.value_or(SIZE_MAX)); },
+			py::arg("nbytes"), nogil)
+		.def(
+			"GetCiphertextCache",
+			[](const CC& cc) -> std::optional<size_t> {
+				size_t b = cc.GetCiphertextCache();
+				return b == SIZE_MAX ? std::nullopt : std::optional<size_t>(b);
+			})
+		// VRAM held by the ciphertexts that are currently resident (offloaded ones excluded),
+		// tracked with or without a budget. Same caveat as the plaintext counter: nvidia-smi
+		// cannot see an eviction, since the limbs go back to FIDESlib's pool.
+		.def("GetCiphertextCacheResidentBytes", &CC::GetCiphertextCacheResidentBytes)
+		// Park every unpinned ciphertext in host RAM now rather than waiting for the budget.
+		.def("OffloadCiphertexts", &CC::OffloadCiphertexts, nogil)
+		// Keep a hot ciphertext (e.g. the accumulator of a long reduction) always resident.
+		.def("PinCiphertext", &CC::PinCiphertext, py::arg("ciphertext"), py::arg("pin") = true, nogil)
 		// Encoding
 		.def(
 			"MakeCKKSPackedPlaintext",

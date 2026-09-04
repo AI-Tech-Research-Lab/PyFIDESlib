@@ -213,6 +213,59 @@ against that allocator view, LRU order, pinning, manual offload, runtime budget 
 plaintext lifetime vs the bookkeeping, per-context independence, the real VRAM cap and a
 no-leak run over 240 forced misses.
 
+### Bounding ciphertext VRAM
+
+Same idea for ciphertexts, on top of the `Offload()`/`Reload()` round trip above: give them a
+byte budget and the least recently used ones get parked in host RAM instead of filling the GPU.
+
+```python
+cc.SetCiphertextCache(8 * 1024**3)    # keep ciphertexts under 8 GiB -- any time
+cc.GetCiphertextCache()               # the budget (None = unlimited, the default)
+cc.GetCiphertextCacheResidentBytes()  # VRAM the resident (non-offloaded) ciphertexts occupy
+cc.PinCiphertext(ct)                  # never evict a hot one, e.g. an accumulator
+cc.OffloadCiphertexts()               # park every unpinned one now
+cc.SetCiphertextCache(None)           # back to unlimited
+```
+
+**This is the expensive one of the three caches — reach for it to survive a working set that
+does not fit in VRAM, not to go faster.** An eviction synchronizes the device and copies the
+limbs to the host; a miss copies them back; and the host snapshot costs as much RAM as the
+ciphertext did VRAM, so you are trading VRAM for host RAM, not saving memory outright. Measured
+at logN=14 on a churn of `EvalAdd`s tight enough to force a round trip per op: **0.80 ms/op
+against 0.03 ms/op unbounded, ~24x**. Where the dataflow is known, offload explicitly with
+`ct.Offload()` (see `examples/03_offload.py`); use a budget when it is not.
+
+What it costs in VRAM per ciphertext is `4 x (L+1) x N x 8` bytes — 3.5 MiB at logN=14/L=6 —
+i.e. **twice** what the naive "two polynomials" count suggests, because each ciphertext limb
+also owns an equally sized auxiliary vector for the NTTs (a plaintext's constant limbs do not).
+And a ciphertext does **not** get cheaper as it descends the levels: FIDESlib keeps the limbs
+(the release in `RNSPoly::dropToLevel` is disabled upstream), so size the budget from the top
+level. Measured: 64 ciphertexts under a budget of four hold 15.7 MB of live VRAM instead of
+236 MB, with identical results.
+
+The one caveat worth knowing: **the budget is enforced at operation boundaries.** The only
+automatic eviction point is the `LoadCiphertext()` every operation performs on its operands
+before it takes a single GPU pointer — which is what makes eviction safe, since operations hold
+raw pointers to ciphertexts across fetches (a hoisted rotation builds a whole batch of them).
+Ciphertexts created *during* an operation are therefore counted but not evicted until the next
+one starts, so expect an overshoot of one operation's working set — measured at 2 ciphertexts
+for `EvalAdd` even under a 1-byte budget, shrinking back on the next call. A ciphertext caught
+in the extended basis mid-key-switch cannot be snapshotted and is skipped as well, and pinned
+ones are never evicted.
+
+The three caches are independent and compose (`tests/test_ciphertext_cache.py --scenario
+with_other_caches` runs a mult+rotate with all three budgets binding at once). Note that
+`GetCiphertextCacheResidentBytes()` is again the metric to watch rather than `nvidia-smi`, and
+that FIDESlib's auxiliary-polynomial cache sits between a destroyed ciphertext and the
+allocator — it retains the polynomials, so dropping ciphertexts frees nothing visible until you
+call `cc.ClearAuxiliaryPolyPool()` (or cap it with `FIDESLIB_AUX_POLY_CACHE_LIMIT`).
+
+`tests/test_ciphertext_cache.py` (`--all`, one subprocess per case) covers all of the above:
+accounting against the allocator, LRU order, pinning, manual offload/reload, runtime budget
+changes, the operation-boundary overshoot, ciphertext lifetime (resident and offloaded),
+per-context independence, the VRAM cap, a no-leak run over 240 forced round trips, and
+add/sub/mult/square/rotate/rescale/accumulate under a one-ciphertext budget.
+
 ## Examples (in suggested order)
 
 | Script | What it shows | Needs |
