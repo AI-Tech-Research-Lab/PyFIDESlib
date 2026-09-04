@@ -19,10 +19,12 @@ if (NOT DEFINED FIDESLIB_REPOSITORY)
     set(FIDESLIB_REPOSITORY "git@github.com:AI-Tech-Research-Lab/FIDESlib.git")
 endif ()
 if (NOT DEFINED FIDESLIB_GIT_TAG)
-    # plaintext VRAM cache: an LRU byte budget over the device plaintexts registered by
-    # LoadPlaintext(), evicting at operation boundaries only (a PlaintextCacheHold guard) and
-    # accounting for the bytes each limb actually owns (RNSPoly::limbBytes()).
-    set(FIDESLIB_GIT_TAG "decedeac587fe3a5220537e6b6195cd255b0e222")
+    # ciphertext VRAM cache: an LRU byte budget over the device ciphertexts, parking the least
+    # recently used ones in host RAM via the existing Ciphertext::offload() snapshot. Evicts at
+    # operation boundaries only -- from LoadCiphertext(), the one point every operation reaches
+    # before it takes a device pointer -- since operations hold raw pointers to ciphertexts
+    # across fetches and offload() frees the limbs in place.
+    set(FIDESLIB_GIT_TAG "a84aabe6afe5990d3a239b026d0ff176731af2ad")
 endif ()
 
 # Library only: skip FIDESlib's own test/benchmark suites (and their gtest/benchmark fetches).
