@@ -19,10 +19,10 @@ if (NOT DEFINED FIDESLIB_REPOSITORY)
     set(FIDESLIB_REPOSITORY "git@github.com:AI-Tech-Research-Lab/FIDESlib.git")
 endif ()
 if (NOT DEFINED FIDESLIB_GIT_TAG)
-    # rotation-key VRAM cache with an LRU byte budget + the LoadContext fix it needs: keys were
-    # built against a local Context that got moved into the std::any, so a key that reloads
-    # itself under a budget dereferenced freed memory (SIGSEGV on the first lazy rotation).
-    set(FIDESLIB_GIT_TAG "66bfa0001204fbc7f113f271db2b8fb9f4f67494")
+    # plaintext VRAM cache: an LRU byte budget over the device plaintexts registered by
+    # LoadPlaintext(), evicting at operation boundaries only (a PlaintextCacheHold guard) and
+    # accounting for the bytes each limb actually owns (RNSPoly::limbBytes()).
+    set(FIDESLIB_GIT_TAG "decedeac587fe3a5220537e6b6195cd255b0e222")
 endif ()
 
 # Library only: skip FIDESlib's own test/benchmark suites (and their gtest/benchmark fetches).
