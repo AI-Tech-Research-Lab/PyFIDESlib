@@ -68,6 +68,23 @@ stay the default. It is now off; `FIDESLIB_USE_MEMCPY_PEER=1` restores it. The c
 on AccumulateSum (9.4 vs 7.8 ms at logN=16, L=24, two NVLinked H100s), still ahead of 10.7 ms
 on one GPU.
 
+### Suite results
+
+`fideslib-test` on one GPU: **424/424**. The same suite on three (`--devices=0,1,2` over
+physical 0, 2, 3, the first time it has ever run multi-GPU): **423/424**.
+
+`tests/test_multigpu.py --devices 0,2,3` here: 35/35, and 6/6 under the spin load.
+
+The single multi-GPU failure is `OpenFHEInterfaceTest.Conjugate/1` (FIXEDAUTO), and it is a
+precision margin, not a wrong result: values are correct to ~46 bits, no NaN. Repeating it 5x
+each way, the max error is systematically about 1.3x higher on three GPUs (6.0-9.6e-14) than
+on one (3.0-8.6e-14) -- consistent with limbs being summed in a different order across
+devices. It crosses the bound only because `ASSERT_ERROR_OK` derives its threshold from the
+CPU reference's own precision estimate, which fluctuates between 45 and 47 bits run to run;
+every 3-GPU failure coincided with the tightest estimate, which never came up in the 1-GPU
+repeats. Worth a look -- either the extra error is avoidable or the tolerance should not
+depend on a fluctuating estimate -- but it does not block multi-GPU use.
+
 ### Known limitation, pre-existing and not multi-GPU
 
 `EvalBootstrapSetup()` segfaults through the Python API on a single GPU as well, for every
