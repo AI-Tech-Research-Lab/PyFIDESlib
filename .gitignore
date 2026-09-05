@@ -10,3 +10,7 @@ dist/
 __pycache__/
 *.py[cod]
 .venv/
+
+# compiled test helpers
+tests/tools/gpu_spin
+build-mgpu/
