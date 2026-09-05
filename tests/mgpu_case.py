@@ -26,8 +26,10 @@ def build(cfg):
     p.SetFirstModSize(60)
     p.SetNumLargeDigits(cfg["dnum"])
     p.SetBatchSize(1 << (cfg["logN"] - 1))
-    p.SetScalingTechnique(fhe.FLEXIBLEAUTO)
+    p.SetScalingTechnique(getattr(fhe, cfg.get("scaling", "FLEXIBLEAUTO")))
     p.SetKeySwitchTechnique(fhe.HYBRID)
+    if "secret_key_dist" in cfg:
+        p.SetSecretKeyDist(getattr(fhe, cfg["secret_key_dist"]))
     p.SetDevices(cfg["devices"])
 
     cc = fhe.GenCryptoContext(p)
@@ -110,7 +112,36 @@ def run_chain(cc, keys, cfg):
                 got=got, expected=exp[0])
 
 
-OPS = {"accumulate": run_accumulate, "rotate": run_rotate, "chain": run_chain}
+def run_bootstrap(cc, keys, cfg):
+    """Bootstrap: the heaviest multi-GPU consumer, and the one that would notice a
+    regression in the plain (non-extended) hoisted rotation its linear transforms use.
+
+    NOT wired into test_multigpu.py's case list, because EvalBootstrapSetup() segfaults
+    through this Python API on ONE GPU as well -- a pre-existing wrapper bug, see the
+    header of tests/diag_bootstrap.py, unrelated to anything multi-GPU. Kept ready for
+    when that is fixed; run it directly with op=bootstrap to check.
+    """
+    slots = cfg.get("slots", 1 << (cfg["logN"] - 1))
+    cc.EvalBootstrapSetup([5, 5], [0, 0], slots)
+    cc.EvalBootstrapKeyGen(keys.secretKey, slots)
+    cc.EvalMultKeyGen(keys.secretKey)
+    cc.LoadContext(keys.publicKey)
+
+    n = 8
+    x = [0.25 + 1e-4 * i for i in range(slots)]
+    ct = cc.Encrypt(keys.publicKey, cc.MakeCKKSPackedPlaintext(x))
+    r = cc.EvalBootstrap(ct)
+    pt = cc.Decrypt(keys.secretKey, r)
+    pt.SetLength(n)
+    got = pt.GetRealPackedValue()[:n]
+    # Bootstrap trades precision for levels; a few decimals is the right bar here, and
+    # NaN -- the failure being watched for -- misses it by any margin.
+    ok = all(close(g, e, tol=1e-2) for g, e in zip(got, x))
+    return emit("bootstrap", ok, got=got[:4], expected=x[:4])
+
+
+OPS = {"accumulate": run_accumulate, "rotate": run_rotate, "chain": run_chain,
+       "bootstrap": run_bootstrap}
 
 
 def main():
@@ -118,6 +149,12 @@ def main():
     cfg.setdefault("logN", 14)
     cfg.setdefault("sizes", [2, 4, 8, 64])
     cfg.setdefault("op", "accumulate")
+    if cfg["op"] == "bootstrap":
+        # Bootstrap is not parameter-agnostic: it needs a ternary secret and the extended
+        # scaling technique, and the depth has to leave room for the level budget.
+        cfg.setdefault("scaling", "FLEXIBLEAUTOEXT")
+        cfg.setdefault("secret_key_dist", "UNIFORM_TERNARY")
+        cfg["depth"] = cfg.get("depth", 11)
 
     cc = build(cfg)
     keys = cc.KeyGen()

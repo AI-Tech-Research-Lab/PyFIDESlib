@@ -12,6 +12,84 @@ upstream issues on `CAPS-UMU/FIDESlib`.
 
 ---
 
+## 0. What was done (2026-09-05)
+
+Phases 0-4 and 6 of the plan below are complete, on `AI-Tech-Research-Lab/FIDESlib`
+`main`. F1, F2, F3, F5 and F6 are fixed; F4 is not fixed but is now reproducible on demand,
+proven to be a race, localised to one code path, and mitigated by a default change.
+
+| finding | state | commit |
+|---|---|---|
+| F1 two NaN fixes lost in the resync | recovered, with their regression tests | `57d3e6c`, `c00a45e` (+ build guards `056d3a2`, `048234d`) |
+| F2 `freeSpecialLimbs` waits the wrong way | fixed, and the same shape in `freeLimbs` | `695d041` |
+| F3 abort when #GPUs > K | fixed: guard + diagnostic at context creation | `359ca78` |
+| F5 `invalid resource handle` at teardown | fixed; root cause was worse than teardown | `4af3de1` |
+| F6 no multi-GPU test coverage | `--devices` for gtest, plus `tests/test_multigpu.py` here | `601a4c5`, PyFIDESlib `1927ad7` |
+| F4 NaN from the extended hoisted rotation | **not fixed**; mitigated by defaulting to NCCL | `efd16ef` |
+
+Three things worth reading past the table.
+
+**F5 was not a teardown bug.** `GPUmalloc` indexes the caching memory pool by the CUDA
+device ordinal; the eight `GPUfree` calls in `LimbPartition` passed `id`, the partition's
+index into `GPUid`. The two agree only when `GPUid` is the identity -- one GPU, or
+`[0,1,...]` -- which is why nothing caught it. When they differ, a chunk freed by partition
+k lands in the pool of device k while living on device `GPUid[k]`, so a later allocation on
+ordinal k can be served another device's memory: with `devices=[0,2,3]`, partition 2 (device
+3) frees into device 2's pool. The crash at teardown was the same mix-up surfacing as an
+event recorded on the wrong device's stream. Any pooled memory in a non-identity device set
+was suspect, which makes this the most consequential fix of the batch -- and a candidate for
+part of what F4 looked like.
+
+**F4 now has an on-demand reproducer.** The plan called needing a foreign job "not a working
+basis". `tests/tools/gpu_spin.cu` puts one resident block per SM on each GPU, starving it of
+scheduling slots the way a saturated neighbour does. On two otherwise idle H100s that turns
+AccumulateSum from 0 failures in 6 runs into 6 in 6 -- no borrowed hardware needed.
+
+**F4 is localised, and the plan's suspect list was wrong about where.** With the reproducer:
+
+* `CUDA_LAUNCH_BLOCKING=1` is clean (4/4) -- it is a race.
+* `FIDESLIB_USE_MEMCPY_PEER=0`, which swaps the peer-copy special-limb exchange for
+  `ncclBroadcast`, is clean (10/10 against 0/10 for the default). The bug is in the peer-copy
+  path, not in the multi-GPU key switch at large.
+* A plain `EvalRotate` and a mult chain are clean under the same load, confirming it is the
+  extended path (`rotate_hoisted(..., ext=true)`) alone.
+* An all-device `cudaDeviceSynchronize` at each of the five boundaries phase 5.2 proposed --
+  after the result `extend`, after `modup`, after `fusedHoistRotate`, on the way out of
+  `rotate_hoisted`, and after the extended `add` -- changes nothing. **The missing dependency
+  is inside the exchange, not between it and its callers**, so the "insert a sync and see"
+  method has already been run to exhaustion; what is left is `moddownMGPU`'s
+  `cudaMemcpyPeerAsync` block (`src/CKKS/LimbPartitionMGPU.cu:2539`) and its counterpart in
+  `modupMGPU`. Suspect (2) from F4 below -- the relative-comparison spin barriers -- is not
+  ruled out, since those sit inside `modupMGPU`; suspect (1), a missing wait around
+  `fusedHoistRotate`, is: a full drain there does not help.
+
+Because contention exposes the race rather than creating it, the peer-copy path could not
+stay the default. It is now off; `FIDESLIB_USE_MEMCPY_PEER=1` restores it. The cost is ~20%
+on AccumulateSum (9.4 vs 7.8 ms at logN=16, L=24, two NVLinked H100s), still ahead of 10.7 ms
+on one GPU.
+
+### Known limitation, pre-existing and not multi-GPU
+
+`EvalBootstrapSetup()` segfaults through the Python API on a single GPU as well, for every
+parameter combination tried -- see the header of `tests/diag_bootstrap.py`, which predates
+this work. `tests/mgpu_case.py` has a bootstrap case ready (`op=bootstrap`) but the suite
+does not run it until that is fixed, so bootstrap has no multi-GPU coverage here.
+
+### Reproducing
+
+```
+cmake -B build-mgpu -S . -DFIDESLIB_ARCH=90-real \
+      -DFETCHCONTENT_SOURCE_DIR_FIDESLIB=/path/to/FIDESlib
+cmake --build build-mgpu -j$(nproc)          # ~1 min incremental, was 4m27s
+
+python tests/test_multigpu.py --devices 0,2,3          # 35 cases, all must pass
+nvcc -O2 -arch=sm_90 -o tests/tools/gpu_spin tests/tools/gpu_spin.cu
+python tests/test_multigpu.py --devices 2,3 --group contention --contend
+/path/to/FIDESlib/build/fideslib-test --devices=0,2,3  # the gtest suite, multi-GPU
+```
+
+---
+
 ## 1. Status summary
 
 Multi-GPU is compiled in and active: NCCL is linked into the Python module
