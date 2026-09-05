@@ -19,12 +19,14 @@ if (NOT DEFINED FIDESLIB_REPOSITORY)
     set(FIDESLIB_REPOSITORY "git@github.com:AI-Tech-Research-Lab/FIDESlib.git")
 endif ()
 if (NOT DEFINED FIDESLIB_GIT_TAG)
-    # ciphertext VRAM cache: an LRU byte budget over the device ciphertexts, parking the least
-    # recently used ones in host RAM via the existing Ciphertext::offload() snapshot. Evicts at
-    # operation boundaries only -- from LoadCiphertext(), the one point every operation reaches
-    # before it takes a device pointer -- since operations hold raw pointers to ciphertexts
-    # across fetches and offload() frees the limbs in place.
-    set(FIDESLIB_GIT_TAG "a84aabe6afe5990d3a239b026d0ff176731af2ad")
+    # multi-GPU fixes: the two NaN fixes lost in the branch resync, the wait direction when a
+    # limb buffer returns to the GPU pool, support for devices that own no special primes
+    # (#GPUs > K used to abort mid-computation), the memory pool indexed by device rather than
+    # by partition index (a device list that was not 0,1,...,n-1 could be served another
+    # device's memory, and crashed at teardown), --devices for the gtest suite, and NCCL
+    # instead of cudaMemcpyPeerAsync as the default multi-GPU transport, since the peer-copy
+    # special-limb exchange races under contention. See docs/multigpu-plan.md.
+    set(FIDESLIB_GIT_TAG "efd16ef060636eef92fdc93e35e3dda5cfea8534")
 endif ()
 
 # Library only: skip FIDESlib's own test/benchmark suites (and their gtest/benchmark fetches).
