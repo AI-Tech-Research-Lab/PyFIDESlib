@@ -25,8 +25,9 @@ if (NOT DEFINED FIDESLIB_GIT_TAG)
     # by partition index (a device list that was not 0,1,...,n-1 could be served another
     # device's memory, and crashed at teardown), --devices for the gtest suite, and NCCL
     # instead of cudaMemcpyPeerAsync as the default multi-GPU transport, since the peer-copy
-    # special-limb exchange races under contention. See docs/multigpu-plan.md.
-    set(FIDESLIB_GIT_TAG "efd16ef060636eef92fdc93e35e3dda5cfea8534")
+    # special-limb exchange races under contention -- which reaches sparse bootstrap, through the
+    # Accumulate step, as well as AccumulateSum itself. See docs/multigpu-plan.md.
+    set(FIDESLIB_GIT_TAG "0342b2876f5763425ceae2c2ed0781731a25643d")
 endif ()
 
 # Library only: skip FIDESlib's own test/benchmark suites (and their gtest/benchmark fetches).

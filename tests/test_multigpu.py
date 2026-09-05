@@ -156,19 +156,26 @@ def build_cases(gpus, contend):
 
     # --- ops: the extended hoisted rotation is the fragile path, but a regression in
     # the plain key switch or in a mult chain would otherwise be misread as one of its
-    # failures. Run all three over every device count.
-    for op in ("accumulate", "rotate", "chain"):
+    # failures. "mixed" is the workload-shaped one -- every arithmetic op the API offers,
+    # interleaved, each intermediate checked -- and is what says whether ordinary use is
+    # sound; the other three isolate one path each so a failure is attributable.
+    for op in ("mixed", "accumulate", "rotate", "chain"):
         for k in range(1, n + 1):
             cases.append(Case("ops", gpus, ids[:k],
                               {"dnum": 3, "depth": 12, "logN": 14, "op": op}))
 
-    # --- contention: F4 was only ever seen with a saturated peer GPU. Repeat the
-    # extended path several times so an intermittent failure has a chance to appear.
+    # --- contention: F4 was only ever seen with a saturated peer GPU. Repeat both the
+    # isolated extended path and the full mixed workload several times, so an intermittent
+    # failure has a chance to appear and so it is visible which operation it lands on.
     if contend:
         for k in range(2, n + 1):
             for _ in range(6):
                 cases.append(Case("contention", gpus, ids[:k],
                                   {"dnum": 3, "depth": 24, "logN": 14}))
+            for _ in range(4):
+                cases.append(Case("contention", gpus, ids[:k],
+                                  {"dnum": 3, "depth": 24, "logN": 14,
+                                   "op": "mixed", "rounds": 3}))
 
     return cases
 

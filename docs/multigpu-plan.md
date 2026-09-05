@@ -68,22 +68,55 @@ stay the default. It is now off; `FIDESLIB_USE_MEMCPY_PEER=1` restores it. The c
 on AccumulateSum (9.4 vs 7.8 ms at logN=16, L=24, two NVLinked H100s), still ahead of 10.7 ms
 on one GPU.
 
+### Which operations F4 actually reaches
+
+The original finding below says bootstrap escapes the extended path because its linear
+transforms pass `ext=false`. That is true of the linear transforms and wrong about bootstrap:
+`Bootstrap.cu:100` and `:263` call `Accumulate`, which is the extended path. Measured, three
+GPUs under the spin load, on the peer-copy transport:
+
+| | result |
+|---|---|
+| add, sub (ct-ct and ct-plaintext), scalar multiply, negate | 420/420 checks clean |
+| multiply ct*ct with relinearisation, square, multiply by plaintext | clean |
+| rotations (1, 2, 3, 7), depth-4 chain with rescale, rotate straight off a multiply | clean |
+| `AccumulateSum` | **12 failures / 30** |
+| `CoeffsToSlots`, `SlotsToCoeffs` (linear transforms, `ext=false`) | 8/8 each |
+| `OpenFHEBootstrapDense` | 8/8 |
+| `OpenFHEBootstrap`, `IterativeBootstrap` (sparse slots) | **11 failures / 16** |
+
+So ordinary arithmetic and rotation never touch the race -- not once in 420 checks on the
+broken transport -- and bootstrap does, through its `Accumulate` step. Dense bootstrap is
+clean for a structural reason rather than by luck: `Accumulate(ctxt, bStep, stride, size)` is
+called with `stride = slots`, `size = N/2/slots`, so at full slots `size == 1` and the loop
+never runs. Sparse bootstrap, which is what a level budget usually implies, does run it.
+
+That is the answer to "is this needed for real use": on the peer-copy transport it was, for
+anything that bootstraps or accumulates. On the NCCL default it is not -- same hardware, same
+load, the bootstrap suite goes from 29/40 to **40/40**, and the mixed workload from 9 failing
+runs in 10 to **0 in 10**. What remains is a latent race in a non-default code path.
+
 ### Suite results
 
 `fideslib-test` on one GPU: **424/424**. The same suite on three (`--devices=0,1,2` over
-physical 0, 2, 3, the first time it has ever run multi-GPU): **423/424**.
+physical 0, 2, 3, the first time it has ever run multi-GPU): **423/424** before the Conjugate
+tolerance fix below, 424/424 after.
 
-`tests/test_multigpu.py --devices 0,2,3` here: 35/35, and 6/6 under the spin load.
+The bootstrap tests on three GPUs *under the spin load*: **40/40** on the NCCL default,
+against 29/40 on the peer-copy transport.
 
-The single multi-GPU failure is `OpenFHEInterfaceTest.Conjugate/1` (FIXEDAUTO), and it is a
-precision margin, not a wrong result: values are correct to ~46 bits, no NaN. Repeating it 5x
-each way, the max error is systematically about 1.3x higher on three GPUs (6.0-9.6e-14) than
-on one (3.0-8.6e-14) -- consistent with limbs being summed in a different order across
-devices. It crosses the bound only because `ASSERT_ERROR_OK` derives its threshold from the
-CPU reference's own precision estimate, which fluctuates between 45 and 47 bits run to run;
-every 3-GPU failure coincided with the tightest estimate, which never came up in the 1-GPU
-repeats. Worth a look -- either the extra error is avoidable or the tolerance should not
-depend on a fluctuating estimate -- but it does not block multi-GPU use.
+`tests/test_multigpu.py --devices 0,2,3` here: all cases pass, and the contention group
+passes under load.
+
+The one multi-GPU failure was `OpenFHEInterfaceTest.Conjugate/1` (FIXEDAUTO), a precision
+margin rather than a wrong result: values correct to ~46 bits, no NaN. Repeating it 5x each
+way, the max error is systematically about 1.3x higher on three GPUs (6.0-9.6e-14) than on one
+(3.0-8.6e-14) -- ordinary floating-point reassociation, since the limbs are summed in a
+different order. It crossed the bound only because `ASSERT_ERROR_OK` derives its threshold
+from the CPU reference's own precision estimate, which fluctuates by two bits run to run, and
+this test takes 24 samples per run: every 3-GPU failure coincided with the tightest draw,
+which never came up in the 1-GPU repeats. Given 2 bits of slack (`ASSERT_ERROR_OK_SLACK`,
+worst observed ratio 1.74, so a 2.3x margin) it passes 8 repeats out of 8 on three GPUs.
 
 ### Known limitation, pre-existing and not multi-GPU
 
@@ -123,9 +156,11 @@ rotations on 4 GPUs produced 0 errors. The genuine multi-GPU key switch
 
 **Broken:** the *extended* hoisted-rotation path -- `AccumulateSum` / `Broadcast`, i.e.
 `Ciphertext::rotate_hoisted(..., ext=true)`. It either aborts the process (finding F3) or
-returns NaN intermittently (finding F4). Bootstrap escapes because its linear transforms call
+returns NaN intermittently (finding F4). Bootstrap's linear transforms call
 `rotate_hoisted(..., false)` (`src/CKKS/LinearTransform.cu:869,1054,1315`), while
-`Accumulate` uses `ext=true` (`src/CKKS/AccumulateBroadcast.cu:33`).
+`Accumulate` uses `ext=true` (`src/CKKS/AccumulateBroadcast.cu:33`). (Corrected 2026-09-05:
+this was read at the time as bootstrap escaping the extended path altogether. It does not --
+`Bootstrap.cu` calls `Accumulate` itself, at lines 100 and 263. See section 0.)
 
 ---
 

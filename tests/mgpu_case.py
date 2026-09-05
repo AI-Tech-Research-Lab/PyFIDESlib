@@ -112,6 +112,78 @@ def run_chain(cc, keys, cfg):
                 got=got, expected=exp[0])
 
 
+def run_mixed(cc, keys, cfg):
+    """A workload shaped like real use rather than one operation in isolation.
+
+    Every arithmetic op the API offers, interleaved and repeated, with every intermediate
+    checked against a plain-Python model -- so a failure names the operation that produced
+    it instead of just the end of the pipeline. `rounds` repeats the whole sequence on
+    fresh ciphertexts, which is what turns an intermittent fault into a visible one.
+    """
+    cc.EvalMultKeyGen(keys.secretKey)
+    idxs = {1, 2, 3, 7}
+    idxs |= set(fhe.accumulate_rotation_indices(8, stride=1))
+    cc.EvalRotateKeyGen(keys.secretKey, sorted(idxs))
+    cc.LoadContext(keys.publicKey)
+
+    n = 8
+    ok = True
+    for r in range(cfg.get("rounds", 3)):
+        base = [float(i + 1) + r for i in range(n)]
+        other = [float(n - i) for i in range(n)]
+        ct = cc.Encrypt(keys.publicKey, cc.MakeCKKSPackedPlaintext(base))
+        ct2 = cc.Encrypt(keys.publicKey, cc.MakeCKKSPackedPlaintext(other))
+        pt = cc.MakeCKKSPackedPlaintext(other)
+
+        def check(name, got_ct, expected, tol=None):
+            nonlocal ok
+            d = cc.Decrypt(keys.secretKey, got_ct)
+            d.SetLength(n)
+            got = d.GetRealPackedValue()[:n]
+            scale = max(1.0, max(abs(e) for e in expected))
+            good = all(close(g, e, tol or 1e-4 * scale) for g, e in zip(got, expected))
+            ok &= emit(f"{name}/r{r}", good, got=got[:3], expected=expected[:3])
+
+        # ct-ct and ct-plaintext arithmetic, no key switch involved
+        check("add_ct", cc.EvalAdd(ct, ct2), [a + b for a, b in zip(base, other)])
+        check("sub_ct", cc.EvalSub(ct, ct2), [a - b for a, b in zip(base, other)])
+        check("add_pt", cc.EvalAdd(ct, pt), [a + b for a, b in zip(base, other)])
+        check("mult_scalar", cc.EvalMult(ct, 2.5), [a * 2.5 for a in base])
+        check("negate", cc.EvalNegate(ct), [-a for a in base])
+
+        # key switch: relinearisation after a ct*ct product, and squaring
+        prod = cc.EvalMult(ct, ct2)
+        check("mult_ct", prod, [a * b for a, b in zip(base, other)])
+        check("square", cc.EvalSquare(ct), [a * a for a in base])
+        check("mult_pt", cc.EvalMult(ct, pt), [a * b for a, b in zip(base, other)])
+
+        # key switch: rotations, the non-extended hoisted path
+        for step in (1, 2, 3, 7):
+            check(f"rotate{step}", cc.EvalRotate(ct, step),
+                  base[step:] + [0.0] * step)
+
+        # the extended hoisted path (AccumulateSum/Broadcast) -- the one that races
+        acc = cc.AccumulateSum(ct, 8)
+        d = cc.Decrypt(keys.secretKey, acc)
+        d.SetLength(1)
+        got = d.GetRealPackedValue()[0]
+        total = sum(base)
+        ok &= emit(f"accumulate8/r{r}", close(got, total, 1e-4 * total),
+                   got=got, expected=total)
+
+        # a deeper chain off the product, exercising rescale and level tracking
+        deep, exp = prod, [a * b for a, b in zip(base, other)]
+        for _ in range(min(cfg["depth"] - 3, 4)):
+            deep = cc.EvalMult(deep, ct)
+            exp = [a * b for a, b in zip(exp, base)]
+        check("deep_chain", deep, exp, tol=1e-2 * max(abs(e) for e in exp))
+
+        # rotate the chain result: an op straight off a mult, the F1 regression shape
+        check("rotate_after_mult", cc.EvalRotate(deep, 1), exp[1:] + [0.0],
+              tol=1e-2 * max(abs(e) for e in exp))
+    return ok
+
+
 def run_bootstrap(cc, keys, cfg):
     """Bootstrap: the heaviest multi-GPU consumer, and the one that would notice a
     regression in the plain (non-extended) hoisted rotation its linear transforms use.
@@ -141,7 +213,7 @@ def run_bootstrap(cc, keys, cfg):
 
 
 OPS = {"accumulate": run_accumulate, "rotate": run_rotate, "chain": run_chain,
-       "bootstrap": run_bootstrap}
+       "mixed": run_mixed, "bootstrap": run_bootstrap}
 
 
 def main():
