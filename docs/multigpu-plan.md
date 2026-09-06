@@ -64,9 +64,15 @@ AccumulateSum from 0 failures in 6 runs into 6 in 6 -- no borrowed hardware need
   `fusedHoistRotate`, is: a full drain there does not help.
 
 Because contention exposes the race rather than creating it, the peer-copy path could not
-stay the default. It is now off; `FIDESLIB_USE_MEMCPY_PEER=1` restores it. The cost is ~20%
-on AccumulateSum (9.4 vs 7.8 ms at logN=16, L=24, two NVLinked H100s), still ahead of 10.7 ms
-on one GPU.
+stay the default. It is now off, and a multi-GPU context that asks for it is refused: since the
+failure is silent -- wrong values, no error -- it must not be reachable by inheriting an
+exported variable. `FIDESLIB_USE_PEER_ACCESS`, the third transport, is gated the same way
+(2 failures in 4 under load). Both are single-GPU no-ops, so the refusal only fires where the
+exchange actually runs. `FIDESLIB_ALLOW_UNSAFE_PEER_TRANSPORT=1` lifts it, with a warning on
+stderr, for measuring the peer path or working on the race.
+
+The cost of the default is ~20% on AccumulateSum (9.4 vs 7.8 ms at logN=16, L=24, two NVLinked
+H100s), still ahead of 10.7 ms on one GPU.
 
 ### Which operations F4 actually reaches
 
@@ -450,8 +456,9 @@ for n in (2, 4, 8, 64):
 * **F5:** run with `'[0,2,3]'`. Values correct, `invalid resource handle` at teardown.
 
 Useful switches while debugging (`src/CKKS/LimbPartitionMGPU.cu:47-49`):
-`FIDESLIB_USE_MEMCPY_PEER` (default 1), `FIDESLIB_USE_GRAPH_CAPTURE` (default 0),
-`FIDESLIB_USE_PEER_ACCESS` (default 0).
+`FIDESLIB_USE_MEMCPY_PEER` (default 0 since 2026-09-05, and refused on a multi-GPU context
+unless `FIDESLIB_ALLOW_UNSAFE_PEER_TRANSPORT=1`), `FIDESLIB_USE_GRAPH_CAPTURE` (default 0),
+`FIDESLIB_USE_PEER_ACCESS` (default 0, gated the same way).
 
 ---
 
