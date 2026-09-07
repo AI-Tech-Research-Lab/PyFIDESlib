@@ -11,6 +11,11 @@ CMake clones and compiles its own pinned copy of FIDESlib (and FIDESlib's own ve
 OpenFHE) entirely inside `build/` -- no git submodule, no system install, no path outside
 this repo. The pin lives in `CMakeLists.txt` (`FIDESLIB_REPOSITORY`/`FIDESLIB_GIT_TAG`; edit
 the defaults there, or pass them with `-D` to define cache entries that shadow the defaults).
+
+It points at **our fork**, `AI-Tech-Research-Lab/FIDESlib` (currently `76ada4a`), not at
+upstream `CAPS-UMU/FIDESlib`: the multi-GPU fixes it carries are not upstream yet -- see
+`docs/multigpu-plan.md`. The clone URL is SSH (`git@github.com:...`), so the build needs an
+SSH key with access to that repository.
 Its only runtime dependencies are the CUDA runtime (RPATH'd to
 `/usr/local/cuda/lib64`) and an NVIDIA GPU.
 
@@ -26,8 +31,11 @@ it's only rebuilt when missing. To pin a different FIDESlib commit or fork, pass
 `-DFIDESLIB_REPOSITORY=... -DFIDESLIB_GIT_TAG=...` to the `cmake -B build` step in `build.sh`,
 or edit the defaults in `CMakeLists.txt`.
 
-Prereqs: CUDA toolkit ≥ 12.4, gcc ≥ 11, CMake ≥ 3.25, network access (FIDESlib/OpenFHE/pybind11
-fetches), and the Python dev headers for the chosen interpreter.
+Prereqs: CUDA toolkit ≥ 12.4, gcc ≥ 11, CMake ≥ 3.25, **NCCL** (`libnccl.so.2` and
+`nccl.h` — the module is built with `-DMULTI_GPU -DNCCL` and links against it, see
+[Multiple GPUs](#multiple-gpus)), network access plus an SSH key for the FIDESlib fork
+(OpenFHE/pybind11 are fetched over HTTPS), and the Python dev headers for the chosen
+interpreter.
 
 The module is bound to the Python **minor version** it was built against
 (e.g. `_core.cpython-312-x86_64-linux-gnu.so` ⇒ Python 3.12). Rebuild to switch.
@@ -65,6 +73,65 @@ pt = cc.Decrypt(keys.secretKey, ct)
 pt.SetLength(3)
 print(pt.GetRealPackedValue())
 ```
+
+## Multiple GPUs
+
+`SetDevices([0, 1, 2])` spreads the work over several GPUs. The split is **per limb, not per
+object** — the towers are dealt out round-robin, `i % len(devices)` — so a single ciphertext
+lives on every GPU of the context, and there is no way to pin ciphertext A to GPU 0 and
+ciphertext B to GPU 1. Plaintexts and keys are split the same way.
+
+```python
+params.SetDevices([0, 2])   # physical ordinals as CUDA sees them; need not be contiguous
+```
+
+Verified on 1/2/3/4 GPUs: `EvalAdd`, `EvalSub`, `EvalMult` (ct·pt, ct·scalar, ct·ct with
+relinearisation), `EvalSquare`, `EvalRotate`, multiplicative chains with rescale,
+`AccumulateSum`, and `EvalBootstrap`.
+
+**NCCL is a build-time dependency, not an optional feature.** Without it FIDESlib calls
+`exit(-1)` as soon as more than one device is requested — the process dies, there is no
+exception to catch.
+
+**The peer-copy transports are refused on purpose.** The `cudaMemcpyPeerAsync` special-limb
+exchange races under GPU contention, and it fails *silently*: wrong values out of
+`AccumulateSum` and of sparse-slot bootstrap, no error raised. A multi-GPU context that asks
+for one (`FIDESLIB_USE_MEMCPY_PEER=1`, `FIDESLIB_USE_PEER_ACCESS=1`) is rejected at creation
+rather than obeyed, since an inherited environment variable must not be able to corrupt
+results; `FIDESLIB_ALLOW_UNSAFE_PEER_TRANSPORT=1` lifts the refusal with a warning, for
+measuring the peer path or working on the race. The NCCL default costs ~20% on `AccumulateSum`
+(9.4 vs 7.8 ms at logN=16, L=24 on two NVLinked H100s) — still ahead of 10.7 ms on one GPU.
+Single-GPU contexts are unaffected: the exchange never runs there.
+
+**More GPUs than special primes is allowed, and says so.** Hybrid key switching has
+`K = ceil((L+1)/dnum)` special primes to hand out; with more devices than that, the extras own
+none and take no part in key switching. That used to abort mid-computation — it now prints a
+diagnostic at context creation and computes correctly.
+
+### What it buys
+
+Capacity for one problem too large for a single GPU, not throughput. Measured at logN=15,
+depth 12, dnum=3, 32 rotation keys, 200 ciphertexts (full tables in `docs/multigpu-plan.md`):
+
+| | 1 GPU | 2 GPUs | 4 GPUs |
+|---|---|---|---|
+| rotation keys, per GPU | 864 MiB | 640 MiB | **424 MiB** |
+| 200 ciphertexts, peak per GPU | 3072 MiB | 2048 MiB | **1024 MiB** |
+| fixed working buffers, per GPU | ~316 MiB | ~800 MiB | ~950 MiB |
+
+Ciphertexts and plaintexts scale nearly linearly (~3x the capacity per GPU at 4 GPUs); keys
+only reach ~2x, because the DECOMP half of every key-switching key is rebuilt in full on every
+device. Latency barely moves: `EvalRotateInPlace` at logN=16, L=24 takes 2.10 ms on one GPU and
+1.77 ms on an NVLinked pair — ~10%, not 2x. **If the workload is batch-parallel, one process
+per GPU with `CUDA_VISIBLE_DEVICES` is the better answer**: linear capacity, no
+synchronisation, and none of the above.
+
+Note that the process opens a ~538 MiB CUDA context on **every visible GPU**, including ones
+absent from `SetDevices` — use `CUDA_VISIBLE_DEVICES` if those GPUs are needed elsewhere.
+
+Regression suite: `python tests/test_multigpu.py --devices 0,1,2` — subsets and permutations of
+the device list (not just prefixes), the `#GPUs` vs `K` table, and every operation including
+bootstrap; `--contend` adds a sweep under synthetic GPU load.
 
 ## Offloading ciphertexts / reclaiming VRAM
 
@@ -274,6 +341,7 @@ add/sub/mult/square/rotate/rescale/accumulate under a one-ciphertext budget.
 | `examples/01_chebyshev.py` | deg-31 polynomial + X4 cleaning vs CPU Clenshaw reference | ~1 GB VRAM, seconds |
 | `examples/02_step_herminirocket.py` | full Step() (Lee α=8 + 2×X4) at logN=17, **secure** params | ~2–4 GB VRAM, ~1–2 min |
 | `examples/03_offload.py` | offload/reload ciphertexts to host RAM, reclaim VRAM with `TrimGPUMemoryPool` | <1 GB VRAM, seconds |
+| `examples/04_bootstrap.py` | bootstrap a ciphertext that has run out of levels — and the parameter rules that make one work | ~1 GB VRAM, seconds |
 
 ## Coming from openfhe-python
 

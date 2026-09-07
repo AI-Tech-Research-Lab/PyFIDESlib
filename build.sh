@@ -11,7 +11,10 @@
 set -e
 cd "$(dirname "$0")"
 
-PY="${1:-python3}"
+# Absolute path on purpose: CMake resolves a bare `python3` against the source directory,
+# records that non-existent path in the cache and silently falls back to whatever FindPython
+# picks -- so `./build.sh` would ignore its own default interpreter.
+PY="$(command -v "${1:-python3}")" || { echo "Interpreter not found: ${1:-python3}" >&2; exit 1; }
 echo "Building against: $PY ($("$PY" --version))"
 
 cmake -B build -S . -DPython_EXECUTABLE="$PY" -DCMAKE_BUILD_TYPE=Release
