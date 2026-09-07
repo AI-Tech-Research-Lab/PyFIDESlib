@@ -5,7 +5,8 @@ investigation abort the process (F3) or corrupt it at teardown (F5): only a subp
 boundary lets the harness tell "wrong value" from "died". test_multigpu.py drives it.
 
 Usage: mgpu_case.py '<json config>'
-Config keys: devices, dnum, depth, logN, sizes, op ("accumulate"|"rotate"|"chain")
+Config keys: devices, dnum, depth, logN, sizes, op ("accumulate"|"rotate"|"chain"|
+"mixed"|"bootstrap"), and for bootstrap: slots, level_budget, scale_mod, first_mod
 Prints one JSON object per line to stdout; exit code 0 only if every check passed.
 """
 
@@ -22,8 +23,8 @@ def build(cfg):
     p.SetSecurityLevel(fhe.HEStd_NotSet)
     p.SetRingDim(1 << cfg["logN"])
     p.SetMultiplicativeDepth(cfg["depth"])
-    p.SetScalingModSize(50)
-    p.SetFirstModSize(60)
+    p.SetScalingModSize(cfg.get("scale_mod", 50))
+    p.SetFirstModSize(cfg.get("first_mod", 60))
     p.SetNumLargeDigits(cfg["dnum"])
     p.SetBatchSize(1 << (cfg["logN"] - 1))
     p.SetScalingTechnique(getattr(fhe, cfg.get("scaling", "FLEXIBLEAUTO")))
@@ -188,20 +189,26 @@ def run_bootstrap(cc, keys, cfg):
     """Bootstrap: the heaviest multi-GPU consumer, and the one that would notice a
     regression in the plain (non-extended) hoisted rotation its linear transforms use.
 
-    NOT wired into test_multigpu.py's case list, because EvalBootstrapSetup() segfaults
-    through this Python API on ONE GPU as well -- a pre-existing wrapper bug, see the
-    header of tests/diag_bootstrap.py, unrelated to anything multi-GPU. Kept ready for
-    when that is fixed; run it directly with op=bootstrap to check.
+    Sparse by default (slots = N/4): sparse bootstrap goes through Accumulate, i.e. the
+    extended path that the peer-copy transport races on, while dense bootstrap does not.
+    Pass "slots" to override.
+
+    Bootstrapping needs its own parameters -- see main() and the header of
+    tests/diag_bootstrap.py for what each one is for and how it fails.
     """
-    slots = cfg.get("slots", 1 << (cfg["logN"] - 1))
-    cc.EvalBootstrapSetup([5, 5], [0, 0], slots)
+    slots = cfg.get("slots", 1 << (cfg["logN"] - 2))
+    level_budget = cfg.get("level_budget", [3, 3])
+    depth = cfg["depth"]
+    cc.EvalBootstrapSetup(level_budget, [0, 0], slots)
     cc.EvalBootstrapKeyGen(keys.secretKey, slots)
     cc.EvalMultKeyGen(keys.secretKey)
     cc.LoadContext(keys.publicKey)
 
     n = 8
-    x = [0.25 + 1e-4 * i for i in range(slots)]
-    ct = cc.Encrypt(keys.publicKey, cc.MakeCKKSPackedPlaintext(x))
+    x = [0.25 + 1e-4 * (i % 100) for i in range(slots)]
+    # At the bottom of the modulus chain: a ciphertext that still has all its levels has
+    # nothing to restore, and the level it comes back at is half the point.
+    ct = cc.Encrypt(keys.publicKey, cc.MakeCKKSPackedPlaintext(x, 1, depth - 1, slots))
     r = cc.EvalBootstrap(ct)
     pt = cc.Decrypt(keys.secretKey, r)
     pt.SetLength(n)
@@ -209,7 +216,9 @@ def run_bootstrap(cc, keys, cfg):
     # Bootstrap trades precision for levels; a few decimals is the right bar here, and
     # NaN -- the failure being watched for -- misses it by any margin.
     ok = all(close(g, e, tol=1e-2) for g, e in zip(got, x))
-    return emit("bootstrap", ok, got=got[:4], expected=x[:4])
+    ok = emit("bootstrap", ok, got=got[:4], expected=x[:4])
+    return ok & emit("bootstrap_levels", r.GetLevel() < ct.GetLevel(),
+                     got=r.GetLevel(), expected=f"< {ct.GetLevel()}")
 
 
 OPS = {"accumulate": run_accumulate, "rotate": run_rotate, "chain": run_chain,
@@ -222,11 +231,20 @@ def main():
     cfg.setdefault("sizes", [2, 4, 8, 64])
     cfg.setdefault("op", "accumulate")
     if cfg["op"] == "bootstrap":
-        # Bootstrap is not parameter-agnostic: it needs a ternary secret and the extended
-        # scaling technique, and the depth has to leave room for the level budget.
-        cfg.setdefault("scaling", "FLEXIBLEAUTOEXT")
+        # Bootstrap is not parameter-agnostic, and neither constraint below reports itself
+        # as an exception -- one segfaults, the other decrypts to noise:
+        #   depth >= 14 + sum(level_budget) for a UNIFORM_TERNARY secret (14 = OpenFHE's
+        #     modular-reduction approximation depth), plus whatever levels the caller
+        #     wants left over. Less than that and EvalBootstrapSetup() SEGFAULTS.
+        #   first_mod - scale_mod <= the correction factor OpenFHE picks (7..14, ~9 here).
+        #     The suite's usual 60/50 gives 10, one too many, and the GPU path answers
+        #     with noise. 60/59 is the OpenFHE bootstrapping recipe.
+        # See the header of tests/diag_bootstrap.py.
+        cfg.setdefault("scaling", "FLEXIBLEAUTO")
         cfg.setdefault("secret_key_dist", "UNIFORM_TERNARY")
-        cfg["depth"] = cfg.get("depth", 11)
+        cfg.setdefault("level_budget", [3, 3])
+        cfg.setdefault("scale_mod", 59)
+        cfg["depth"] = cfg.get("depth", 14 + sum(cfg["level_budget"]) + 2)
 
     cc = build(cfg)
     keys = cc.KeyGen()

@@ -164,6 +164,15 @@ def build_cases(gpus, contend):
             cases.append(Case("ops", gpus, ids[:k],
                               {"dnum": 3, "depth": 12, "logN": 14, "op": op}))
 
+    # --- Bootstrap is an op too, but it cannot share the depth above: it needs 14 levels
+    # for the modular-reduction approximation plus its level budget (mgpu_case.py spells
+    # out why, and what a depth that is too small does -- it segfaults, it does not
+    # raise). Sparse by default, which is the shape that goes through Accumulate.
+    for k in range(1, n + 1):
+        cases.append(Case("ops", gpus, ids[:k],
+                          {"dnum": 3, "depth": 14 + 3 + 3 + 2, "logN": 14,
+                           "level_budget": [3, 3], "op": "bootstrap"}))
+
     # --- contention: F4 was only ever seen with a saturated peer GPU. Repeat both the
     # isolated extended path and the full mixed workload several times, so an intermittent
     # failure has a chance to appear and so it is visible which operation it lands on.

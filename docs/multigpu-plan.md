@@ -124,12 +124,24 @@ this test takes 24 samples per run: every 3-GPU failure coincided with the tight
 which never came up in the 1-GPU repeats. Given 2 bits of slack (`ASSERT_ERROR_OK_SLACK`,
 worst observed ratio 1.74, so a 2.3x margin) it passes 8 repeats out of 8 on three GPUs.
 
-### Known limitation, pre-existing and not multi-GPU
+### Bootstrap coverage (was: a "pre-existing wrapper bug")
 
-`EvalBootstrapSetup()` segfaults through the Python API on a single GPU as well, for every
-parameter combination tried -- see the header of `tests/diag_bootstrap.py`, which predates
-this work. `tests/mgpu_case.py` has a bootstrap case ready (`op=bootstrap`) but the suite
-does not run it until that is fixed, so bootstrap has no multi-GPU coverage here.
+This section used to record `EvalBootstrapSetup()` as segfaulting through the Python API
+"for every parameter combination tried", on one GPU as well as several, and the suite
+skipped its bootstrap case because of it. That was never a wrapper bug: every combination
+tried set a multiplicative depth of 11, and a UNIFORM_TERNARY bootstrap costs 14 levels for
+the modular-reduction approximation before the level budget is counted at all. Below that,
+the leftover level count goes negative in unsigned arithmetic and the process dies inside
+the setup call. A second parameter mattered too, silently: `firstModSize - scalingModSize`
+must not exceed the correction factor OpenFHE derives from the ring and slot counts
+(7..14, ~9 here), or the GPU path decrypts to noise -- the suite's usual 60/50 is one over.
+Both rules, and the level budgets that still misbehave, are written up in the header of
+`tests/diag_bootstrap.py`.
+
+With those fixed, `op=bootstrap` is wired into the `ops` group and passes on 1, 2 and 3
+GPUs (sparse, `slots = N/4`, so it goes through `Accumulate` -- the path the peer-copy
+transport races on), and `tests/test_rotation_key_cache.py --scenario bootstrap` runs a
+whole bootstrapping key set under a 6-key VRAM budget on one GPU.
 
 ### Reproducing
 

@@ -299,3 +299,11 @@ responsive. A single dispatch thread is enough — the GPU serializes the work.
   `nvidia-smi` before logN=17 runs on a shared GPU.
 - `numpy` arrays are accepted wherever a list of floats is (converted on the
   way in); returned values are Python lists.
+- **Bootstrapping is picky about parameters, and says so by crashing.**
+  `SetMultiplicativeDepth()` must cover `14 + levelBudget[0] + levelBudget[1]`
+  for a `UNIFORM_TERNARY` secret (14 = OpenFHE's modular-reduction
+  approximation) plus the levels you want left over — below that
+  `EvalBootstrapSetup()` segfaults. And `firstModSize - scalingModSize` must
+  not exceed the correction factor OpenFHE picks (7–14): 60/50 is one over and
+  decrypts to noise, 60/59 is the OpenFHE recipe. Worked example:
+  `tests/diag_bootstrap.py`.

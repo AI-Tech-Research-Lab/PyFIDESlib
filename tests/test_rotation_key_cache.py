@@ -6,10 +6,11 @@ behaviour broke instead of killing the whole run. A crash is reported as `exit=-
 
     python tests/test_rotation_key_cache.py --all
     python tests/test_rotation_key_cache.py --scenario lru
-    RKTEST_BOOTSTRAP=1 python tests/test_rotation_key_cache.py --scenario bootstrap
+    python tests/test_rotation_key_cache.py --scenario bootstrap
 
 Env: RKTEST_DEVICE (physical GPU index, exported as CUDA_VISIBLE_DEVICES so the process
-only ever touches that one GPU), RKTEST_RING (log2 ring dim, default 13).
+only ever touches that one GPU), RKTEST_RING (log2 ring dim, default 13),
+RKTEST_BOOTSTRAP_BUDGET (bytes; default 6 rotation keys' worth).
 """
 
 from __future__ import annotations
@@ -58,6 +59,51 @@ def make_context(mult_depth: int = 6):
     for feat in (fhe.PKE, fhe.KEYSWITCH, fhe.LEVELEDSHE, fhe.ADVANCEDSHE):
         cc.Enable(feat)
     return cc
+
+
+# ---------------------------------------------------------------- bootstrapping
+# A bootstrappable context is not the suite's context with a bigger depth: two parameter
+# constraints have to hold, and breaking either one is silent or fatal rather than an
+# exception you can catch.
+#
+#  * The multiplicative depth must cover the bootstrap itself: BOOT_MOD_DEPTH (OpenFHE's
+#    GetModDepthInternal for a UNIFORM_TERNARY secret -- the degree-44 Chebyshev
+#    approximation of the modular reduction plus its 6 double-angle iterations) plus both
+#    halves of the level budget. Below that, EvalBootstrapSetup() SEGFAULTS: the number of
+#    levels left over goes negative in unsigned arithmetic. That, and nothing about the
+#    wrapper, is what used to kill this scenario at mult_depth=11.
+#  * firstModSize - scalingModSize must not exceed the correction factor OpenFHE derives
+#    from the ring and slot counts (clamped to 7..14, ~9 here). The suite's 60/50 gives
+#    10: on the CPU path that throws "Degree [10] must be less than or equal to the
+#    correction factor [9]", on the GPU path it silently decrypts to noise. 60/59 -- the
+#    OpenFHE bootstrapping recipe -- gives 1.
+#
+# The level budget is not free either: {2, 2} and {5, 5} decrypt to noise on the GPU at
+# 2048 slots (they are fine on the CPU, and fine on the GPU at 1024 or 4096 slots), so
+# leave it at {3, 3} unless you re-check the result.
+BOOT_MOD_DEPTH = 14
+BOOT_TOL = 1e-3  # bootstrap trades precision for levels: ~2e-5 at logN=13, ~7e-4 at 16
+
+
+def make_bootstrap_context(level_budget):
+    """A context that can bootstrap, and the multiplicative depth it was built with."""
+    depth = BOOT_MOD_DEPTH + sum(level_budget) + 2  # +2 usable levels after a bootstrap
+    params = fhe.CCParams()
+    params.SetSecretKeyDist(fhe.UNIFORM_TERNARY)
+    params.SetSecurityLevel(fhe.HEStd_NotSet)
+    params.SetRingDim(1 << RING)
+    params.SetMultiplicativeDepth(depth)
+    params.SetScalingModSize(59)
+    params.SetFirstModSize(60)
+    params.SetNumLargeDigits(3)
+    params.SetBatchSize(BATCH)
+    params.SetScalingTechnique(fhe.FLEXIBLEAUTO)
+    params.SetKeySwitchTechnique(fhe.HYBRID)
+    params.SetDevices([DEVICE])
+    cc = fhe.GenCryptoContext(params)
+    for feat in (fhe.PKE, fhe.KEYSWITCH, fhe.LEVELEDSHE, fhe.ADVANCEDSHE, fhe.FHE):
+        cc.Enable(feat)
+    return cc, depth
 
 
 def load(cc, budget, idxs=ROT_IDXS):
@@ -471,43 +517,79 @@ def s_no_leak(scn):
 
 
 def s_bootstrap(scn):
-    """The real use case: hundreds of bootstrap keys under a byte budget."""
-    if os.environ.get("RKTEST_BOOTSTRAP") != "1":
-        raise Skipped("set RKTEST_BOOTSTRAP=1 to run")
-    cc = make_context(mult_depth=11)
-    cc.Enable(fhe.FHE)
+    """The real use case: a whole bootstrapping key set under a byte budget."""
+    level_budget = [3, 3]
+    cc, depth = make_bootstrap_context(level_budget)
     slots = BATCH // 2
-    budget = int(os.environ.get("RKTEST_BOOTSTRAP_BUDGET", str(256 * 1024 * 1024)))
     keys = cc.KeyGen()
-    cc.SetRotationKeyCache(budget)
+    # Finite (not None) from the start: only keys built under a budget keep the host
+    # snapshot the cache round-trips through. Generous for now -- it is tightened below,
+    # once a key has been measured in this very context.
+    cc.SetRotationKeyCache(1 << 34)
     cc.EvalMultKeyGen(keys.secretKey)
-    # Both of these must happen before LoadContext (the api throws otherwise).
-    cc.EvalBootstrapSetup([5, 5], [0, 0], slots)
+    cc.EvalRotateKeyGen(keys.secretKey, [1])  # the yardstick key, see measure_key_bytes
+    # All of these must happen before LoadContext (the api throws otherwise).
+    cc.EvalBootstrapSetup(level_budget, [0, 0], slots)
     cc.EvalBootstrapKeyGen(keys.secretKey, slots)
     t0 = time.time()
     cc.LoadContext(keys.publicKey)
     scn.log(f"LoadContext with bootstrap keys: {time.time() - t0:.1f}s")
-    scn.log(f"resident after load: {cc.GetRotationKeyCacheResidentBytes():,} (budget {budget:,})")
+    assert cc.GetRotationKeyCacheResidentBytes() == 0, \
+        "bootstrap keys are not lazy -- they took VRAM before first use"
 
-    data = [0.25 + 1e-4 * i for i in range(slots)]
-    ct = cc.Encrypt(keys.publicKey, cc.MakeCKKSPackedPlaintext(data))
+    # Encode at the bottom of the modulus chain: bootstrapping a ciphertext that still
+    # has all its levels proves nothing, and the level it comes back at is the point.
+    data = [0.25 + 1e-4 * (i % 100) for i in range(slots)]
+    ct = cc.Encrypt(keys.publicKey, cc.MakeCKKSPackedPlaintext(data, 1, depth - 1, slots))
+
+    key_bytes = measure_key_bytes(cc, keys, ct)
+    budget = int(os.environ.get("RKTEST_BOOTSTRAP_BUDGET", str(6 * key_bytes)))
+    cc.SetRotationKeyCache(budget)
+    scn.log(f"one key is {key_bytes:,} bytes; budget set to {budget:,} "
+            f"({budget / key_bytes:.1f} keys)")
+
     t0 = time.time()
     bt = cc.EvalBootstrap(ct)
-    scn.log(f"bootstrap #1: {time.time() - t0:.1f}s")
     got = decrypt(cc, keys.secretKey, bt, n=64)
-    scn.log(f"resident after bootstrap #1: {cc.GetRotationKeyCacheResidentBytes():,}")
+    resident = cc.GetRotationKeyCacheResidentBytes()
+    scn.log(f"bootstrap #1: {time.time() - t0:.1f}s, level {ct.GetLevel()} -> "
+            f"{bt.GetLevel()} of {depth}")
+    scn.log(f"resident after bootstrap #1: {resident:,} ({resident / budget:.2f}x budget)")
     err = maxdiff(got, data[:64])
     scn.log(f"bootstrap error: {err:.2e}")
-    assert err < 1e-4, f"bootstrap is wrong ({err:.2e})"
+    assert err < BOOT_TOL, f"bootstrap is wrong ({err:.2e})"
+    assert bt.GetLevel() < ct.GetLevel(), "bootstrap did not restore any level"
+    # Soft, but not by much: the linear transforms hold one hoisted batch of keys at a
+    # time and the cache shrinks back on the next load.
+    assert resident <= 2 * budget, f"the budget is not binding ({resident:,} resident)"
+
+    # Bootstrap is not bit-reproducible run to run (multi-stream reductions, amplified by
+    # the Chebyshev evaluation), so 'the cold keys gave the same answer' can only mean
+    # 'within the same spread as warm runs'. Measure that spread rather than assume it --
+    # here it is the same order as the bootstrap error itself, unlike a plain rotation's.
+    floor = max(maxdiff(got, decrypt(cc, keys.secretKey, cc.EvalBootstrap(ct), n=64))
+                for _ in range(2))
+    scn.log(f"warm-to-warm reproducibility floor: {floor:.2e}")
 
     cc.OffloadRotationKeys()
+    assert cc.GetRotationKeyCacheResidentBytes() == 0, "offload left keys resident"
     t0 = time.time()
     bt2 = cc.EvalBootstrap(ct)
     scn.log(f"bootstrap #2 (cold keys): {time.time() - t0:.1f}s")
     got2 = decrypt(cc, keys.secretKey, bt2, n=64)
     d = maxdiff(got, got2)
-    scn.log(f"|cold - warm| = {d:.2e}")
-    assert d < 1e-6, f"cold-key bootstrap diverges from warm ({d:.2e})"
+    scn.log(f"|cold - warm| = {d:.2e}, cold error {maxdiff(got2, data[:64]):.2e}")
+    assert maxdiff(got2, data[:64]) < BOOT_TOL, "the cold-key bootstrap is wrong"
+    assert d <= max(4 * floor, 1e-9), \
+        f"cold-key bootstrap diverges from warm ({d:.2e} vs floor {floor:.2e})"
+
+    # What the budget actually bought: run it once more unbounded and compare the VRAM.
+    cc.SetRotationKeyCache(None)
+    cc.EvalBootstrap(ct)
+    full = cc.GetRotationKeyCacheResidentBytes()
+    scn.log(f"same bootstrap unbounded: {full:,} resident ({full / key_bytes:.0f} keys) "
+            f"-- the budget held it to {resident / full:.0%} of that")
+    assert full > 2 * resident, "the budget saved nothing -- the working set fits it"
     scn.ok("bootstrap with a bounded rotation-key cache")
 
 
