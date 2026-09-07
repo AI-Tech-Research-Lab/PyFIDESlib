@@ -163,6 +163,21 @@ export FIDESLIB_AUX_POLY_CACHE_LIMIT=0
 
 If the variable is absent or invalid, the original unbounded behavior is retained.
 
+### Long runs: two memory bugs fixed in the pinned FIDESlib
+
+Neither is visible to `nvidia-smi` or to the pool statistics above, so both are worth knowing
+about if you are chasing growth — or an unexplained crash — in a long job:
+
+- Every key switch allocated a table of `6*dnum` device pointers and never freed it — 144 B per
+  key switch at `dnum=3`, 8.4 KB per `EvalBootstrap`, linear and unbounded. It bypasses
+  FIDESlib's slab pool, so only the CUDA allocator's own used-byte counter shows it.
+  `tests/test_bootstrap_memory.py` guards this: it bootstraps in batches, takes a baseline after
+  warm-up and requires that counter to come back identical, checking a decryption each batch so
+  a run that stops leaking by computing nothing still fails.
+- Dropping a `CryptoContext` left its keys in FIDESlib's global param-switch store. The next
+  clear of that store then destroyed a key whose context was gone — a segfault, not a leak, and
+  reachable from any process that builds a context, drops it and keeps working.
+
 ### Bounding rotation-key VRAM
 
 Rotation keys are usually the largest permanent VRAM tenant — measured with `dnum=3`: 3.8 MiB

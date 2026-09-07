@@ -19,17 +19,24 @@ if (NOT DEFINED FIDESLIB_REPOSITORY)
     set(FIDESLIB_REPOSITORY "git@github.com:AI-Tech-Research-Lab/FIDESlib.git")
 endif ()
 if (NOT DEFINED FIDESLIB_GIT_TAG)
-    # multi-GPU fixes: the two NaN fixes lost in the branch resync, the wait direction when a
-    # limb buffer returns to the GPU pool, support for devices that own no special primes
-    # (#GPUs > K used to abort mid-computation), the memory pool indexed by device rather than
-    # by partition index (a device list that was not 0,1,...,n-1 could be served another
-    # device's memory, and crashed at teardown), --devices for the gtest suite, and NCCL
-    # instead of cudaMemcpyPeerAsync as the default multi-GPU transport, since the peer-copy
-    # special-limb exchange races under contention -- which reaches sparse bootstrap, through the
-    # Accumulate step, as well as AccumulateSum itself. Asking for a peer transport on a
-    # multi-GPU context is now refused outright, since that failure is silent. See
-    # docs/multigpu-plan.md.
-    set(FIDESLIB_GIT_TAG "76ada4adc612b225d97cf8556ebb78407ad57493")
+    # Two memory fixes on top of the multi-GPU work below. The fused key switch allocated a
+    # table of 6*dnum device pointers per call and never freed it: 144 bytes per key switch,
+    # 8.4 KB per bootstrap, linear and unbounded over a long run -- and it bypasses FIDESlib's
+    # slab pool, so only the CUDA allocator's used-byte counter shows it (tests/test_bootstrap_memory.py).
+    # The second is why that one took a while to land: a destroyed context left its keys in the
+    # global param-switch store, and the next clear of that store destroyed a key whose context
+    # was gone. Any process that builds a CryptoContext, drops it and keeps working could hit it.
+    #
+    # Earlier, still in this pin: the two NaN fixes lost in the branch resync, the wait direction
+    # when a limb buffer returns to the GPU pool, support for devices that own no special primes
+    # (#GPUs > K used to abort mid-computation), the memory pool indexed by device rather than by
+    # partition index (a device list that was not 0,1,...,n-1 could be served another device's
+    # memory, and crashed at teardown), --devices for the gtest suite, and NCCL instead of
+    # cudaMemcpyPeerAsync as the default multi-GPU transport, since the peer-copy special-limb
+    # exchange races under contention -- which reaches sparse bootstrap, through the Accumulate
+    # step, as well as AccumulateSum itself. Asking for a peer transport on a multi-GPU context is
+    # now refused outright, since that failure is silent. See docs/multigpu-plan.md.
+    set(FIDESLIB_GIT_TAG "64a3a2ca43b05168909518c6daa69d5d489d348e")
 endif ()
 
 # Library only: skip FIDESlib's own test/benchmark suites (and their gtest/benchmark fetches).
