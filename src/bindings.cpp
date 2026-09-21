@@ -54,6 +54,20 @@ std::vector<int> AccumulateRotationIndices(int slots, int stride, int bStep) {
 	}
 	return indices;
 }
+
+// Replace a ciphertext's payload without replacing its shared_ptr.  Pybind converts a
+// Python-held shared_ptr argument to a temporary C++ shared_ptr, so assigning that pointer
+// would not be visible through existing Python aliases.  Swapping the implementation state
+// preserves object identity; destruction of `replacement` then releases the old payload.
+void ReplaceCiphertextPayload(CtI& target, CtI& replacement) {
+	using std::swap;
+	swap(target.need_lazy_copy, replacement.need_lazy_copy);
+	swap(target.cpu, replacement.cpu);
+	swap(target.gpu, replacement.gpu);
+	swap(target.loaded, replacement.loaded);
+	swap(target.parent_context, replacement.parent_context);
+	swap(target.original_level, replacement.original_level);
+}
 } // namespace
 
 PYBIND11_MODULE(_core, m) {
@@ -456,7 +470,15 @@ PYBIND11_MODULE(_core, m) {
 			 py::arg("precompute") = true, py::arg("btsfirstboot") = false, nogil)
 		.def("EvalBootstrapKeyGen", &CC::EvalBootstrapKeyGen, py::arg("privateKey"), py::arg("slots"), nogil)
 		.def("EvalBootstrap", &CC::EvalBootstrap, py::arg("ciphertext"), py::arg("numIterations") = 1,
-			 py::arg("precision") = 0, py::arg("prescaled") = false, nogil);
+			 py::arg("precision") = 0, py::arg("prescaled") = false, nogil)
+		.def(
+			"EvalBootstrapInPlace",
+			[](CC& cc, const Ct& ct, uint32_t numIterations, uint32_t precision, bool prescaled) {
+				auto refreshed = cc.EvalBootstrap(ct, numIterations, precision, prescaled);
+				ReplaceCiphertextPayload(*ct, *refreshed);
+			},
+			py::arg("ciphertext"), py::arg("numIterations") = 1, py::arg("precision") = 0,
+			py::arg("prescaled") = false, nogil);
 
 	// ---- Free functions ----
 

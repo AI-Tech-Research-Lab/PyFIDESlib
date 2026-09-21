@@ -67,6 +67,24 @@ def run(args):
     values = [0.01 + 0.0001 * (i % 17) for i in range(slots)]
     ct = cc.Encrypt(keys.publicKey, cc.MakeCKKSPackedPlaintext(values, 1, depth - 1, slots))
 
+    # The in-place binding must replace the shared_ptr stored in the existing Python
+    # object, not merely rebind a temporary C++ copy.  An alias therefore observes the
+    # refreshed level without a second bootstrap or a Python-side ciphertext cache.
+    inplace = ct.Clone()
+    alias = inplace
+    old_level = inplace.GetLevel()
+    cc.EvalBootstrapInPlace(inplace, 2, 8)
+    if alias is not inplace or alias.GetLevel() >= old_level:
+        raise AssertionError(
+            f"in-place bootstrap did not update aliases: {old_level} -> {alias.GetLevel()}"
+        )
+    pt = cc.Decrypt(keys.secretKey, alias)
+    pt.SetLength(slots)
+    error = max(abs(a - b) for a, b in zip(pt.GetRealPackedValue(), values))
+    if error >= 1e-5:
+        raise AssertionError(f"in-place bootstrap error {error}")
+    del alias, inplace, pt
+
     def batch(count):
         for i in range(count):
             result = cc.EvalBootstrap(ct, 2, 8)
