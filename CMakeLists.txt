@@ -19,8 +19,11 @@ if (NOT DEFINED FIDESLIB_REPOSITORY)
     set(FIDESLIB_REPOSITORY "git@github.com:AI-Tech-Research-Lab/FIDESlib.git")
 endif ()
 if (NOT DEFINED FIDESLIB_GIT_TAG)
-    # Two memory fixes on top of the multi-GPU work below. The fused key switch allocated a
-    # table of 6*dnum device pointers per call and never freed it: 144 bytes per key switch,
+    # The bootstrap-precomputation VRAM cache (SetBootstrapCache), and rotation-key snapshots
+    # in pinned host memory so that cache misses reload at PCIe bandwidth.
+    #
+    # Earlier, still in this pin: two memory fixes on top of the multi-GPU work below. The fused
+    # key switch allocated a table of 6*dnum device pointers per call and never freed it: 144 bytes per key switch,
     # 8.4 KB per bootstrap, linear and unbounded over a long run -- and it bypasses FIDESlib's
     # slab pool, so only the CUDA allocator's used-byte counter shows it (tests/test_bootstrap_memory.py).
     # The second is why that one took a while to land: a destroyed context left its keys in the
@@ -36,7 +39,7 @@ if (NOT DEFINED FIDESLIB_GIT_TAG)
     # exchange races under contention -- which reaches sparse bootstrap, through the Accumulate
     # step, as well as AccumulateSum itself. Asking for a peer transport on a multi-GPU context is
     # now refused outright, since that failure is silent. See docs/multigpu-plan.md.
-    set(FIDESLIB_GIT_TAG "64a3a2ca43b05168909518c6daa69d5d489d348e")
+    set(FIDESLIB_GIT_TAG "fabb8d2a2e0638a31a7cc4607a5ce4dc0c242933")
 endif ()
 
 # Library only: skip FIDESlib's own test/benchmark suites (and their gtest/benchmark fetches).

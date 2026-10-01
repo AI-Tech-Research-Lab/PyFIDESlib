@@ -317,7 +317,8 @@ PYBIND11_MODULE(_core, m) {
 		// op holding several plaintexts at once (the convolution transforms) keeps its whole
 		// batch resident until it returns; and a budget below one plaintext still keeps the
 		// one in use. Only plaintexts you create are cached -- the plaintexts inside the
-		// bootstrapping precomputation belong to the GPU context and are not affected.
+		// bootstrapping precomputation belong to the GPU context and have their own budget,
+		// SetBootstrapCache().
 		.def(
 			"SetPlaintextCache",
 			[](CC& cc, std::optional<size_t> nbytes) { cc.SetPlaintextCache(nbytes.value_or(SIZE_MAX)); },
@@ -373,6 +374,40 @@ PYBIND11_MODULE(_core, m) {
 		.def("OffloadCiphertexts", &CC::OffloadCiphertexts, nogil)
 		// Keep a hot ciphertext (e.g. the accumulator of a long reduction) always resident.
 		.def("PinCiphertext", &CC::PinCiphertext, py::arg("ciphertext"), py::arg("pin") = true, nogil)
+		// Bootstrap-precomputation VRAM cache: the CoeffsToSlots/SlotsToCoeffs matrices, which
+		// stay resident for the whole run otherwise and are, once the rotation keys are bounded,
+		// most of what a bootstrap holds (~12 GB at logN=17, depth 43, level budget [4, 4]). A
+		// transform stage's matrices are loaded from a host-RAM snapshot right before the stage
+		// runs and evicted again for others. The bootstrapping rotation keys are not part of it:
+		// they are ordinary rotation keys, bounded by SetRotationKeyCache().
+		//
+		// Same rule as SetRotationKeyCache(): call it BEFORE LoadContext(). Only matrices built
+		// under a finite budget keep the snapshot (as much host RAM as the VRAM they would hold)
+		// and cost no VRAM until the first bootstrap; a later call only re-tunes the budget for
+		// those. `None` = unlimited (the default).
+		//
+		// A bootstrap walks its stages in a fixed order, so the cache evicts the MOST recently
+		// used stage: a fixed subset stays resident and only the stages beyond the budget are
+		// reloaded each bootstrap (LRU would reload every one of them). The budget is soft by one
+		// stage -- the stage being loaded is never evicted -- and it belongs to the GPU context,
+		// shared by contexts with identical parameters, like the rotation-key budget.
+		.def(
+			"SetBootstrapCache",
+			[](CC& cc, std::optional<size_t> nbytes) { cc.SetBootstrapCache(nbytes.value_or(SIZE_MAX)); },
+			py::arg("nbytes"), nogil)
+		.def(
+			"GetBootstrapCache",
+			[](const CC& cc) -> std::optional<size_t> {
+				size_t b = cc.GetBootstrapCache();
+				return b == SIZE_MAX ? std::nullopt : std::optional<size_t>(b);
+			})
+		// VRAM held by the resident bootstrap matrices, with or without a budget.
+		.def("GetBootstrapCacheResidentBytes", &CC::GetBootstrapCacheResidentBytes)
+		// Bytes reloaded from host RAM so far: sample it around a bootstrap to see what the
+		// budget costs per bootstrap (0 once everything fits).
+		.def("GetBootstrapCacheLoadedBytes", &CC::GetBootstrapCacheLoadedBytes)
+		// Evict every matrix that has a snapshot now; the next bootstrap reloads what it needs.
+		.def("OffloadBootstrapPrecomputation", &CC::OffloadBootstrapPrecomputation, nogil)
 		// Encoding
 		.def(
 			"MakeCKKSPackedPlaintext",

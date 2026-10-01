@@ -121,6 +121,8 @@ print(f"\nx^4 on the refreshed ciphertext: {[round(v, 6) for v in got]} "
 assert max(abs(a - b) for a, b in zip(got, expected)) < 1e-3, "x^4 after bootstrap is wrong"
 
 # Bootstrapping keys are ordinary rotation keys and by far the largest VRAM tenant here
-# (54 of them, ~688 MB at these parameters). SetRotationKeyCache() bounds them -- see the
-# README section on rotation-key VRAM; it must be called before LoadContext().
+# (54 of them, ~688 MB at these parameters). SetRotationKeyCache() bounds them, and
+# SetBootstrapCache() bounds the CoeffsToSlots/SlotsToCoeffs matrices, the next largest --
+# see the README sections on rotation-key and bootstrap-precomputation VRAM. Both must be
+# called before LoadContext().
 print("\nAll checks passed.")
