@@ -123,6 +123,6 @@ assert max(abs(a - b) for a, b in zip(got, expected)) < 1e-3, "x^4 after bootstr
 # Bootstrapping keys are ordinary rotation keys and by far the largest VRAM tenant here
 # (54 of them, ~688 MB at these parameters). SetRotationKeyCache() bounds them, and
 # SetBootstrapCache() bounds the CoeffsToSlots/SlotsToCoeffs matrices, the next largest --
-# see the README sections on rotation-key and bootstrap-precomputation VRAM. Both must be
+# see "VRAM cache" in the README. Both must be
 # called before LoadContext().
 print("\nAll checks passed.")
