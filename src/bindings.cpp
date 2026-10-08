@@ -18,11 +18,16 @@
 #include <fideslib.hpp>
 #include "CudaUtils.cuh"
 #include "CKKS/Context.cuh"
+#include "CKKS/Ciphertext.cuh"
+#include "CKKS/Plaintext.cuh"
 #include <cuda_runtime_api.h>
 
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <optional>
+#include <limits>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -67,6 +72,187 @@ void ReplaceCiphertextPayload(CtI& target, CtI& replacement) {
 	swap(target.loaded, replacement.loaded);
 	swap(target.parent_context, replacement.parent_context);
 	swap(target.original_level, replacement.original_level);
+}
+
+void EvalLinearWSumMutable(Ct& dest, uint32_t n, std::vector<Ct> ctxs, std::vector<double> weights) {
+	if (n == 0 || ctxs.size() < n || weights.size() < n)
+		throw py::value_error("evalLinearWSumMutable: n must be positive and both sequences must contain at least n entries");
+	auto cc = dest->parent_context;
+	for (uint32_t i = 0; i < n; ++i) {
+		if (!ctxs[i] || ctxs[i]->parent_context != cc)
+			throw py::value_error("evalLinearWSumMutable: inputs must be non-null ciphertexts from the destination's context");
+		if (!std::isfinite(weights[i]))
+			throw py::value_error("evalLinearWSumMutable: weights must be finite");
+	}
+	if (cc->devices.empty())
+		throw std::runtime_error("evalLinearWSumMutable: requires a GPU context");
+
+	// Load all handles before fetching any GPU pointers: LoadCiphertext may evict earlier
+	// operands under a finite cache budget. GetDeviceCiphertext reloads without eviction.
+	cc->LoadCiphertext(dest);
+	for (uint32_t i = 0; i < n; ++i)
+		cc->LoadCiphertext(ctxs[i]);
+	using GPUCt = FIDESlib::CKKS::Ciphertext;
+	auto output = std::static_pointer_cast<GPUCt>(cc->GetDeviceCiphertext(dest->gpu));
+	std::vector<GPUCt*> inputs;
+	inputs.reserve(n);
+	for (uint32_t i = 0; i < n; ++i) {
+		auto input = std::static_pointer_cast<GPUCt>(cc->GetDeviceCiphertext(ctxs[i]->gpu));
+		if (input->NoiseLevel != 1)
+			throw py::value_error("evalLinearWSumMutable: inputs must have noise scale degree 1; rescale them first");
+		if (input->getLevel() < output->getLevel())
+			throw py::value_error("evalLinearWSumMutable: destination must have no more remaining levels than any input");
+		if (!inputs.empty() && input->keyID != inputs.front()->keyID)
+			throw py::value_error("evalLinearWSumMutable: inputs must use the same key");
+		inputs.push_back(input.get());
+	}
+	output->evalLinearWSumMutable(n, inputs, std::move(weights));
+}
+
+using GPUCt = FIDESlib::CKKS::Ciphertext;
+using GPUPt = FIDESlib::CKKS::Plaintext;
+
+void CheckCiphertextContext(CC& cc, const Ct& ct) {
+	if (!ct || ct->parent_context.get() != &cc)
+		throw py::value_error("ciphertext must be non-null and belong to this context");
+}
+
+void CheckCiphertext(CC& cc, const Ct& ct) {
+	CheckCiphertextContext(cc, ct);
+	if (cc.devices.empty())
+		throw std::runtime_error("operation requires a GPU context");
+}
+
+void CheckCiphertextList(CC& cc, std::vector<Ct>& cts, bool inPlace) {
+	if (cts.empty())
+		throw py::value_error("EvalAddMany: ciphertext list must not be empty");
+	std::set<const CtI*> seen;
+	for (const auto& ct : cts) {
+		CheckCiphertextContext(cc, ct);
+		if (inPlace && !seen.insert(ct.get()).second)
+			throw py::value_error("EvalAddManyInPlace: repeated ciphertext objects are not supported; use EvalAddMany instead");
+	}
+	if (!cc.devices.empty()) {
+		for (auto& ct : cts)
+			cc.LoadCiphertext(ct);
+		auto first = std::static_pointer_cast<GPUCt>(cc.GetDeviceCiphertext(cts.front()->gpu));
+		for (const auto& ct : cts)
+			if (std::static_pointer_cast<GPUCt>(cc.GetDeviceCiphertext(ct->gpu))->keyID != first->keyID)
+				throw py::value_error("EvalAddMany: ciphertexts must use the same key");
+	}
+}
+
+void CheckRotationKeys(const CC& cc, const GPUCt& ct, const std::vector<int>& indices) {
+	for (int index : indices) {
+		int normalized = ct.normalyzeIndex(index);
+		if (normalized == 0)
+			continue;
+		bool found = false;
+		for (int keyIndex : cc.rotation_indexes)
+			found |= ct.normalyzeIndex(keyIndex) == normalized;
+		if (!found)
+			throw py::value_error("missing rotation key for index " + std::to_string(index) + "; call EvalRotateKeyGen before LoadContext");
+	}
+}
+
+std::vector<Ct> EvalFastRotations(CC& cc, Ct ct, const std::vector<int32_t>& indices) {
+	CheckCiphertext(cc, ct);
+	if (indices.empty())
+		return {};
+	cc.LoadCiphertext(ct);
+	auto input = std::static_pointer_cast<GPUCt>(cc.GetDeviceCiphertext(ct->gpu));
+	CheckRotationKeys(cc, *input, indices);
+	// The GPU overload does its hoisting internally and ignores m/precomp.
+	return cc.EvalFastRotation(ct, indices, 0, nullptr);
+}
+
+void DotProductPt(Ct& dest, std::vector<Ct> ctxs, std::vector<Pt> pts) {
+	auto& cc = *dest->parent_context;
+	CheckCiphertext(cc, dest);
+	if (ctxs.empty() || ctxs.size() != pts.size() || ctxs.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+		throw py::value_error("dotProductPt: sequences must have the same positive length");
+	for (size_t i = 0; i < ctxs.size(); ++i) {
+		CheckCiphertext(cc, ctxs[i]);
+		if (!pts[i] || pts[i]->parent_context.get() != &cc)
+			throw py::value_error("dotProductPt: plaintexts must be non-null and belong to the destination's context");
+	}
+	PlaintextCacheHold hold(cc);
+	cc.LoadCiphertext(dest);
+	for (auto& ct : ctxs)
+		cc.LoadCiphertext(ct);
+	for (auto& pt : pts)
+		cc.LoadPlaintext(pt);
+	auto output = std::static_pointer_cast<GPUCt>(cc.GetDeviceCiphertext(dest->gpu));
+	std::vector<GPUCt*> inputs;
+	std::vector<GPUPt*> weights;
+	for (size_t i = 0; i < ctxs.size(); ++i) {
+		auto ct = std::static_pointer_cast<GPUCt>(cc.GetDeviceCiphertext(ctxs[i]->gpu));
+		auto pt = std::static_pointer_cast<GPUPt>(cc.GetDevicePlaintext(pts[i]->gpu));
+		if (ct->NoiseLevel != 1 || pt->NoiseLevel != 1)
+			throw py::value_error("dotProductPt: ciphertexts and plaintexts must have noise scale degree 1");
+		if (ct->getLevel() != output->getLevel() || pt->c0.getLevel() != output->getLevel())
+			throw py::value_error("dotProductPt: destination, ciphertexts and plaintexts must have the same level");
+		if (!inputs.empty() && ct->keyID != inputs.front()->keyID)
+			throw py::value_error("dotProductPt: ciphertexts must use the same key");
+		inputs.push_back(ct.get());
+		weights.push_back(pt.get());
+	}
+	// Keep the public result in the ordinary Q basis; extended-basis buffers are internal.
+	output->dotProductPt(inputs.data(), weights.data(), static_cast<int>(inputs.size()), false);
+}
+
+int ConvolutionRowSize(int gStep, int bStep, const std::vector<int>& indexes, int stride, int rowSize) {
+	// Upstream's even-sized tree reduction loses terms for non-power-of-two counts.
+	// Complete power-of-two giant-step blocks also give an unambiguous packing formula.
+	if (gStep <= 0 || !std::has_single_bit(static_cast<unsigned>(gStep)) || bStep <= 0)
+		throw py::value_error("ConvolutionTransformInPlace: gStep must be a positive power of two and bStep must be positive");
+	int64_t count = static_cast<int64_t>(gStep) * bStep;
+	if (count > std::numeric_limits<int>::max() || indexes.size() != static_cast<size_t>(bStep))
+		throw py::value_error("ConvolutionTransformInPlace: indexes must contain bStep entries and gStep*bStep must fit an int");
+	if (static_cast<int64_t>(std::abs(static_cast<int64_t>(stride))) * gStep > std::numeric_limits<int>::max())
+		throw py::value_error("ConvolutionTransformInPlace: rotation stride overflows an int");
+	if (rowSize != 0 && rowSize != count)
+		throw py::value_error("ConvolutionTransformInPlace: rowSize must equal gStep*bStep (or be 0)");
+	return static_cast<int>(count);
+}
+
+std::vector<int> ConvolutionRotationIndices(int gStep, int bStep, const std::vector<int>& indexes, int stride, int rowSize) {
+	ConvolutionRowSize(gStep, bStep, indexes, stride, rowSize);
+	std::set<int> required(indexes.begin(), indexes.end());
+	// Include the largest intra-block shift too (the upstream helper omits it).
+	for (int k = 1; k <= std::min(gStep, 8); ++k)
+		required.insert(k * stride);
+	for (int k = 1; k < (static_cast<int64_t>(gStep) + 7) / 8; ++k)
+		required.insert(static_cast<int>(static_cast<int64_t>(k) * 8 * stride));
+	required.erase(0);
+	return {required.begin(), required.end()};
+}
+
+void ConvolutionTransformInPlace(CC& cc, Ct ct, int gStep, int bStep, std::vector<Pt> pts,
+								const std::vector<int>& indexes, int stride, int rowSize) {
+	CheckCiphertext(cc, ct);
+	rowSize = ConvolutionRowSize(gStep, bStep, indexes, stride, rowSize);
+	if (pts.size() != static_cast<size_t>(rowSize))
+		throw py::value_error("ConvolutionTransformInPlace: plaintext count must equal gStep*bStep");
+	for (const auto& pt : pts)
+		if (!pt || pt->parent_context.get() != &cc)
+			throw py::value_error("ConvolutionTransformInPlace: plaintexts must be non-null and belong to this context");
+	PlaintextCacheHold hold(cc);
+	cc.LoadCiphertext(ct);
+	auto input = std::static_pointer_cast<GPUCt>(cc.GetDeviceCiphertext(ct->gpu));
+	CheckRotationKeys(cc, *input, ConvolutionRotationIndices(gStep, bStep, indexes, stride, rowSize));
+	if (input->NoiseLevel != 1 && input->NoiseLevel != 2)
+		throw py::value_error("ConvolutionTransformInPlace: ciphertext must have noise scale degree 1 or 2");
+	int level = input->getLevel() - (input->NoiseLevel == 2 ? 1 : 0);
+	if (level < 1)
+		throw py::value_error("ConvolutionTransformInPlace: insufficient remaining levels for multiplication and rescale");
+	for (auto& pt : pts) {
+		cc.LoadPlaintext(pt);
+		auto weight = std::static_pointer_cast<GPUPt>(cc.GetDevicePlaintext(pt->gpu));
+		if (weight->NoiseLevel != 1 || weight->c0.getLevel() != level)
+			throw py::value_error("ConvolutionTransformInPlace: plaintexts need degree 1 and the ciphertext's level after any input rescale");
+	}
+	cc.ConvolutionTransformInPlace(ct, gStep, bStep, pts, indexes, stride, rowSize);
 }
 } // namespace
 
@@ -185,6 +371,14 @@ PYBIND11_MODULE(_core, m) {
 
 	py::class_<CtI, Ct>(m, "Ciphertext")
 		.def("Clone", &CtI::Clone, nogil)
+		.def("dotProductPt", &DotProductPt, py::arg("ctxs"), py::arg("pts"),
+			 "Overwrite this ciphertext with sum(ctxs[i]*pts[i]) on GPU, without rescaling. "
+			 "All operands require the same level/context and degree 1. The receiver may be an input.", nogil)
+		.def("evalLinearWSumMutable", &EvalLinearWSumMutable,
+			 py::arg("n"), py::arg("ctxs"), py::arg("weights"),
+			 "Overwrite this ciphertext with the weighted sum of the first n inputs (GPU only). "
+			 "Inputs need noise scale degree 1 and the same context/key. No rescale is performed; "
+			 "the result has noise scale degree 2. The destination may also be an input.", nogil)
 		.def("GetLevel", &CtI::GetLevel)
 		.def("GetNoiseScaleDeg", &CtI::GetNoiseScaleDeg)
 		.def("SetSlots", &CtI::SetSlots, py::arg("slots"))
@@ -456,6 +650,16 @@ PYBIND11_MODULE(_core, m) {
 		.def("EvalAddInPlace", [](CC& cc, Ct& a, const Ct& b) { cc.EvalAddInPlace(a, b); }, nogil)
 		.def("EvalAddInPlace", [](CC& cc, Ct& a, Pt b) { cc.EvalAddInPlace(a, b); }, nogil)
 		.def("EvalAddInPlace", [](CC& cc, Ct& a, double b) { cc.EvalAddInPlace(a, b); }, nogil)
+		.def("EvalAddMany", [](CC& cc, std::vector<Ct> cts) {
+			CheckCiphertextList(cc, cts, false);
+			// Upstream GPU EvalAddMany accesses an empty reduction buffer for a singleton.
+			return cts.size() == 1 ? cts.front()->Clone() : cc.EvalAddMany(cts);
+		}, py::arg("ciphertexts"), "Sum a nonempty list, preserving inputs. A singleton returns an independent clone.", nogil)
+		.def("EvalAddManyInPlace", [](CC& cc, std::vector<Ct> cts) {
+			CheckCiphertextList(cc, cts, true);
+			cc.EvalAddManyInPlace(cts);
+		}, py::arg("ciphertexts"), "Reduce a nonempty list into ciphertexts[0]. Other inputs may also be modified. "
+			"Repeated ciphertext objects are rejected.", nogil)
 		// Sub
 		.def("EvalSub", [](CC& cc, const Ct& a, const Ct& b) { return cc.EvalSub(a, b); }, nogil)
 		.def("EvalSub", [](CC& cc, const Ct& a, Pt b) { return cc.EvalSub(a, b); }, nogil)
@@ -473,9 +677,26 @@ PYBIND11_MODULE(_core, m) {
 		// Square / Negate
 		.def("EvalSquare", &CC::EvalSquare, nogil)
 		.def("EvalNegate", &CC::EvalNegate, nogil)
+		.def("EvalSquareInPlace", [](CC& cc, Ct ct) {
+			CheckCiphertextContext(cc, ct);
+			cc.EvalSquareInPlace(ct);
+		}, py::arg("ciphertext"), "Square a ciphertext in place, with the same scaling behavior as EvalSquare.", nogil)
+		.def("EvalNegateInPlace", [](CC& cc, Ct ct) {
+			CheckCiphertextContext(cc, ct);
+			cc.EvalNegateInPlace(ct);
+		}, py::arg("ciphertext"), "Negate a ciphertext in place, with the same scaling behavior as EvalNegate.", nogil)
 		// Rotations
 		.def("EvalRotate", &CC::EvalRotate, py::arg("ciphertext"), py::arg("index"), nogil)
 		.def("EvalRotateInPlace", &CC::EvalRotateInPlace, py::arg("ciphertext"), py::arg("index"), nogil)
+		.def("EvalFastRotation", &EvalFastRotations, py::arg("ciphertext"), py::arg("indices"),
+			 "Return GPU hoisted rotations in the order of indices. No precomputation handle is needed. "
+			 "Zero indices return independent copies; the input is preserved.", nogil)
+		.def("ConvolutionTransformInPlace", &ConvolutionTransformInPlace,
+			 py::arg("ciphertext"), py::arg("gStep"), py::arg("bStep"), py::arg("pts"),
+			 py::arg("indexes"), py::arg("stride") = 1, py::arg("rowSize") = 0,
+			 "Apply a GPU convolution transform in place. gStep must be a power of two; "
+			 "pts has gStep*bStep entries and indexes has bStep entries. "
+			 "Returns a degree-2 result without a final rescale; degree-2 input is rescaled first.", nogil)
 		// Chebyshev
 		.def(
 			"EvalChebyshevSeries",
@@ -492,6 +713,13 @@ PYBIND11_MODULE(_core, m) {
 		// Rescale
 		.def("Rescale", &CC::Rescale, nogil)
 		.def("RescaleInPlace", &CC::RescaleInPlace, nogil)
+		.def("SetLevel", [](CC& cc, Ct ct, size_t level) {
+			CheckCiphertextContext(cc, ct);
+			if (level < ct->GetLevel() || level > cc.multiplicative_depth)
+				throw py::value_error("SetLevel: level must be between the ciphertext's current level and the context's multiplicative depth");
+			cc.SetLevel(ct, level);
+		}, py::arg("ciphertext"), py::arg("level"),
+			 "Drop a ciphertext to a larger Python level index in place; cannot restore consumed levels.", nogil)
 		// Accumulation (replaces OpenFHE's EvalSum; needs rotation keys from
 		// accumulate_rotation_indices(slots, stride)).
 		.def("AccumulateSum", &CC::AccumulateSum, py::arg("ciphertext"), py::arg("slots"), py::arg("stride") = 1, nogil)
@@ -532,4 +760,7 @@ PYBIND11_MODULE(_core, m) {
 	m.def("accumulate_rotation_indices", &AccumulateRotationIndices, py::arg("slots"), py::arg("stride") = 1,
 		  py::arg("bstep") = 4,
 		  "Rotation indices required by AccumulateSum(ct, slots, stride). Pass them to EvalRotateKeyGen.");
+	m.def("convolution_rotation_indices", &ConvolutionRotationIndices,
+		  py::arg("gStep"), py::arg("bStep"), py::arg("indexes"), py::arg("stride") = 1, py::arg("rowSize") = 0,
+		  "Rotation indices required by ConvolutionTransformInPlace. Generate these keys before LoadContext.");
 }

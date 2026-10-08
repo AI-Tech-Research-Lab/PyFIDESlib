@@ -70,12 +70,97 @@ Things that differ from openfhe-python:
 - **Bootstrapping is strict about its parameters**, and it can segfault or decrypt to noise
   instead of raising. Start from `examples/04_bootstrap.py`.
 
+For a convolution with scalar weights shared across slots, combine rotated ciphertexts
+with the GPU weighted-sum primitive:
+
+```python
+ctxs = cc.EvalFastRotation(ct, [-1, 0, 1])
+weights = [0.25, 0.5, 0.25]
+out = ct.Clone()
+out.evalLinearWSumMutable(len(ctxs), ctxs, weights)
+cc.RescaleInPlace(out)
+```
+
+`evalLinearWSumMutable(n, ctxs, weights)` overwrites its receiver with the weighted sum
+of the first `n` inputs, independently in each slot. It returns `None`, releases the GIL,
+and requires a GPU context. Inputs must belong to the receiver's context, use the same
+key, and have noise scale degree 1. The receiver must have no more remaining levels
+than any input (its Python `GetLevel()` must be at least theirs). Other input ciphertexts
+are preserved; the receiver can itself be an input. The result has noise scale degree 2
+and is **not rescaled automatically**: call `cc.RescaleInPlace(out)` before another
+weighted sum. Offloaded inputs are reloaded automatically. Rotations use cyclic slot
+boundaries; padding/masking for a convolution must be handled separately.
+
+`cc.EvalFastRotation(ct, indices)` returns a list of GPU hoisted rotations in the same
+order as `indices`, sharing the decomposition work across rotations. It preserves the
+input and returns independent copies for zero rotations. Generate keys for every
+nonzero rotation before `LoadContext()`. No precomputation handle is required on GPU.
+
+For weights or masks that differ between slots, use plaintext dot products instead:
+
+```python
+pts = [cc.MakeCKKSPackedPlaintext(w, level=ct.GetLevel()) for w in slot_weights]
+out = ct.Clone()
+out.dotProductPt(ctxs, pts)               # sum_i ctxs[i] * pts[i], slot by slot
+cc.RescaleInPlace(out)
+```
+
+`dotProductPt(ctxs, pts)` overwrites its receiver and returns `None`. Both lists must
+have the same positive length. All operands must have the same context and level,
+and inputs must have noise scale degree 1; ciphertext inputs must use the same key.
+The receiver can also be an input. The result has degree 2, without automatic rescale.
+Both ciphertext and plaintext cache budgets are supported.
+
+`cc.ConvolutionTransformInPlace(ct, gStep, bStep, pts, indexes, stride=1, rowSize=0)`
+combines baby-step rotations and plaintext products, then rotates and sums giant-step
+groups. Let `R_k` be a left cyclic rotation by `k` slots. Its packing formula is:
+
+```text
+out = sum_j R_(stride*(gStep-j))(sum_i pts[j*bStep+i] * R_indexes[i](ct))
+```
+
+The plaintext weights are rotated along with each inner sum. `indexes` has `bStep`
+entries, `pts` has `gStep*bStep` entries, and `rowSize` must be 0 or that same product.
+The binding requires a positive power-of-two `gStep`: the current upstream tree
+reduction can lose contributions for other even sizes. Use
+`fhe.convolution_rotation_indices(gStep, bStep, indexes, stride)` to generate **all**
+required rotation keys before `LoadContext()`, including the giant-step rotations.
+Plaintexts need degree 1 and the input level. If the input has degree 2, the transform
+rescales it first, so encode the plaintexts at `ct.GetLevel()+1`. The transform returns
+`None`, preserves Python aliases of `ct`, and leaves a degree-2 result requiring an
+explicit final `cc.RescaleInPlace(ct)`. These three operations require a GPU context
+and release the GIL. See `examples/05_convolution.py` for a complete example.
+
+Run `python tests/test_convolution_ops.py` for numerical GPU checks, including the
+weighted-sum tests. Set `WSUM_SCALING=FIXEDMANUAL` to test manual scaling, or
+`CUDA_VISIBLE_DEVICES=0,1 WSUM_DEVICES=0,1` to run on two GPUs.
+
+Additional arithmetic helpers work on both CPU and GPU and release the GIL:
+
+| Method | Behavior |
+|---|---|
+| `cc.EvalAddMany(ciphertexts)` | Sum a nonempty list, preserving inputs; a singleton returns a clone. |
+| `cc.EvalAddManyInPlace(ciphertexts)` | Store the sum in `ciphertexts[0]`; other entries may also change. Repeated ciphertext objects are rejected. |
+| `cc.EvalSquareInPlace(ct)` | Square `ct`, preserving its Python object identity. |
+| `cc.EvalNegateInPlace(ct)` | Negate `ct`, preserving its Python object identity. |
+| `cc.SetLevel(ct, level)` | Drop `ct` to a larger Python level index; cannot restore consumed levels. |
+
+The in-place helpers return `None`. Inputs must belong to the calling context;
+ciphertexts being added must use the same key. Squaring and negation follow the scaling
+behavior of the existing `EvalSquare` and `EvalNegate`: on GPU, negation is implemented
+as multiplication by -1, so its noise scale degree can change. `SetLevel` uses FIDESlib's
+level adjustment for the selected scaling technique, and accepts levels from
+`ct.GetLevel()` through the context's multiplicative depth. Use
+`python tests/test_arithmetic_helpers.py` to check these bindings, including CPU behavior;
+the same `WSUM_SCALING` and `WSUM_DEVICES` settings apply.
+
 The `examples/` directory has, in order:
 - `00_onboarding.py`, a first walkthrough;
 - `01_chebyshev.py`, `EvalChebyshevSeries`;
 - `02_step_herminirocket.py`, an inference step;
 - `03_offload.py`, manual offload;
-- `04_bootstrap.py`, bootstrapping and the parameters it requires.
+- `04_bootstrap.py`, bootstrapping and the parameters it requires;
+- `05_convolution.py`, three ways to evaluate a cyclic convolution.
 
 ## VRAM cache
 

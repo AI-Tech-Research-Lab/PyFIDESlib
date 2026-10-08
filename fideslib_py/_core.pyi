@@ -4,7 +4,7 @@ Python bindings for FIDESlib (CKKS on GPU, interoperable with OpenFHE)
 from __future__ import annotations
 import numpy
 import typing
-__all__: list[str] = ['ADVANCEDSHE', 'CCParams', 'Ciphertext', 'CryptoContext', 'FHE', 'FIXEDAUTO', 'FIXEDMANUAL', 'FLEXIBLEAUTO', 'FLEXIBLEAUTOEXT', 'GAUSSIAN', 'GenCryptoContext', 'GetChebyshevCoefficients', 'GetGPUMemoryPoolStats', 'HEStd_128_classic', 'HEStd_128_quantum', 'HEStd_192_classic', 'HEStd_192_quantum', 'HEStd_256_classic', 'HEStd_256_quantum', 'HEStd_NotSet', 'HYBRID', 'KEYSWITCH', 'KeyPair', 'KeySwitchTechnique', 'LEVELEDSHE', 'MULTIPARTY', 'PKE', 'PKESchemeFeature', 'PRE', 'Plaintext', 'PrivateKey', 'PublicKey', 'SCHEMESWITCH', 'SPARSE_ENCAPSULATED', 'SPARSE_TERNARY', 'ScalingTechnique', 'SecretKeyDist', 'SecurityLevel', 'UNIFORM_TERNARY', 'accumulate_rotation_indices']
+__all__: list[str] = ['ADVANCEDSHE', 'CCParams', 'Ciphertext', 'CryptoContext', 'FHE', 'FIXEDAUTO', 'FIXEDMANUAL', 'FLEXIBLEAUTO', 'FLEXIBLEAUTOEXT', 'GAUSSIAN', 'GenCryptoContext', 'GetChebyshevCoefficients', 'GetGPUMemoryPoolStats', 'HEStd_128_classic', 'HEStd_128_quantum', 'HEStd_192_classic', 'HEStd_192_quantum', 'HEStd_256_classic', 'HEStd_256_quantum', 'HEStd_NotSet', 'HYBRID', 'KEYSWITCH', 'KeyPair', 'KeySwitchTechnique', 'LEVELEDSHE', 'MULTIPARTY', 'PKE', 'PKESchemeFeature', 'PRE', 'Plaintext', 'PrivateKey', 'PublicKey', 'SCHEMESWITCH', 'SPARSE_ENCAPSULATED', 'SPARSE_TERNARY', 'ScalingTechnique', 'SecretKeyDist', 'SecurityLevel', 'UNIFORM_TERNARY', 'accumulate_rotation_indices', 'convolution_rotation_indices']
 class CCParams:
     def GetBatchSize(self) -> int:
         ...
@@ -41,6 +41,12 @@ class CCParams:
     def __init__(self) -> None:
         ...
 class Ciphertext:
+    def dotProductPt(self, ctxs: list[Ciphertext], pts: list[Plaintext]) -> None:
+        """Overwrite self with sum(ctxs[i]*pts[i]) on GPU, without rescaling."""
+        ...
+    def evalLinearWSumMutable(self, n: int, ctxs: list[Ciphertext], weights: list[float]) -> None:
+        """Overwrite self with a weighted sum on GPU, without rescaling (result degree 2)."""
+        ...
     def Clone(self) -> Ciphertext:
         ...
     def GetLevel(self) -> int:
@@ -56,6 +62,27 @@ class Ciphertext:
     def SetSlots(self, slots: int) -> None:
         ...
 class CryptoContext:
+    def EvalAddMany(self, ciphertexts: list[Ciphertext]) -> Ciphertext:
+        """Sum a nonempty list while preserving inputs; a singleton returns a clone."""
+        ...
+    def EvalAddManyInPlace(self, ciphertexts: list[Ciphertext]) -> None:
+        """Reduce into ciphertexts[0]; other inputs may change. Repeated objects are rejected."""
+        ...
+    def EvalSquareInPlace(self, ciphertext: Ciphertext) -> None:
+        """Square in place with the same scaling behavior as EvalSquare."""
+        ...
+    def EvalNegateInPlace(self, ciphertext: Ciphertext) -> None:
+        """Negate in place with the same scaling behavior as EvalNegate."""
+        ...
+    def SetLevel(self, ciphertext: Ciphertext, level: int) -> None:
+        """Drop to a larger Python level index in place; consumed levels cannot be restored."""
+        ...
+    def EvalFastRotation(self, ciphertext: Ciphertext, indices: list[int]) -> list[Ciphertext]:
+        """Return GPU hoisted rotations in index order, preserving the input."""
+        ...
+    def ConvolutionTransformInPlace(self, ciphertext: Ciphertext, gStep: int, bStep: int, pts: list[Plaintext], indexes: list[int], stride: int = 1, rowSize: int = 0) -> None:
+        """Apply a GPU convolution transform, leaving a degree-2 result without final rescale."""
+        ...
     def AccumulateSum(self, ciphertext: Ciphertext, slots: int, stride: int = 1) -> Ciphertext:
         ...
     def AccumulateSumInPlace(self, ciphertext: Ciphertext, slots: int, stride: int = 1) -> None:
@@ -489,6 +516,9 @@ def GetChebyshevCoefficients(func: typing.Callable, a: float, b: float, degree: 
     Chebyshev interpolation coefficients of a Python callable on [a, b].
     """
 def GetGPUMemoryPoolStats(device: int = 0) -> dict:
+    ...
+def convolution_rotation_indices(gStep: int, bStep: int, indexes: list[int], stride: int = 1, rowSize: int = 0) -> list[int]:
+    """Rotation indices required by ConvolutionTransformInPlace; generate keys before LoadContext."""
     ...
 def accumulate_rotation_indices(slots: int, stride: int = 1, bstep: int = 4) -> list[int]:
     """
