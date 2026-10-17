@@ -8,14 +8,16 @@
 // Notes:
 //  - All GPU-heavy calls release the GIL.
 //  - Do NOT import this module together with `openfhe` (openfhe-python) in the
-//    same process: this module embeds a patched OpenFHE 1.5.1 statically.
+//    same process: this module embeds a patched OpenFHE 1.6.1 statically.
 
+#include <pybind11/complex.h>
 #include <pybind11/functional.h>
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
 #include <fideslib.hpp>
+#include <Serialize.hpp>
 #include "CudaUtils.cuh"
 #include "CKKS/Context.cuh"
 #include "CKKS/Ciphertext.cuh"
@@ -115,6 +117,11 @@ using GPUPt = FIDESlib::CKKS::Plaintext;
 void CheckCiphertextContext(CC& cc, const Ct& ct) {
 	if (!ct || ct->parent_context.get() != &cc)
 		throw py::value_error("ciphertext must be non-null and belong to this context");
+}
+
+void CheckPlaintextContext(CC& cc, const Pt& pt) {
+	if (!pt || pt->parent_context.get() != &cc)
+		throw py::value_error("plaintext must be non-null and belong to this context");
 }
 
 void CheckCiphertext(CC& cc, const Ct& ct) {
@@ -302,6 +309,16 @@ PYBIND11_MODULE(_core, m) {
 		.value("FLEXIBLEAUTOEXT", FLEXIBLEAUTOEXT)
 		.export_values();
 
+	py::enum_<CKKSDataType>(m, "CKKSDataType")
+		.value("REAL", REAL)
+		.value("COMPLEX", COMPLEX)
+		.export_values();
+
+	py::enum_<SerType>(m, "SerType")
+		.value("BINARY", BINARY)
+		.value("JSON", JSON)
+		.export_values();
+
 	py::enum_<KeySwitchTechnique>(m, "KeySwitchTechnique")
 		.value("HYBRID", HYBRID)
 		.export_values();
@@ -381,6 +398,8 @@ PYBIND11_MODULE(_core, m) {
 			 "the result has noise scale degree 2. The destination may also be an input.", nogil)
 		.def("GetLevel", &CtI::GetLevel)
 		.def("GetNoiseScaleDeg", &CtI::GetNoiseScaleDeg)
+		.def("GetScalingFactor", &CtI::GetScalingFactor)
+		.def("GetSlots", &CtI::GetSlots)
 		.def("SetSlots", &CtI::SetSlots, py::arg("slots"))
 		// Offload / Reload: evict this ciphertext's GPU limbs to host RAM and restore them
 		// verbatim (bit-exact; no decrypt/rescale/NTT). A no-op if not currently loaded on a
@@ -400,6 +419,8 @@ PYBIND11_MODULE(_core, m) {
 		.def("SetBatchSize", &Params::SetBatchSize)
 		.def("SetRingDim", &Params::SetRingDim)
 		.def("SetScalingTechnique", &Params::SetScalingTechnique)
+		.def("SetCKKSDataType", &Params::SetCKKSDataType)
+		.def("GetCKKSDataType", &Params::GetCKKSDataType)
 		.def("SetNumLargeDigits", &Params::SetNumLargeDigits)
 		.def("SetFirstModSize", &Params::SetFirstModSize)
 		.def("SetDigitSize", &Params::SetDigitSize)
@@ -430,6 +451,17 @@ PYBIND11_MODULE(_core, m) {
 		.def("LoadContext", &CC::LoadContext, py::arg("publicKey"), nogil)
 		.def("LoadPlaintext", &CC::LoadPlaintext, py::arg("plaintext"), nogil)
 		.def("LoadCiphertext", &CC::LoadCiphertext, py::arg("ciphertext"), nogil)
+		.def("UnloadCiphertext", [](CC& cc, Ct ct) {
+			CheckCiphertextContext(cc, ct);
+			cc.UnloadCiphertext(ct);
+		}, py::arg("ciphertext"), "Download the current value to the CPU and release its GPU handle.", nogil)
+		.def("DeserializeCiphertextFromFile", [](const std::shared_ptr<CC>& cc, const std::string& filename, SerType sertype) {
+			auto ct = std::make_shared<CtI>(std::shared_ptr<CC>(cc));
+			if (!Serial::DeserializeFromFile(filename, ct, sertype))
+				throw std::runtime_error("Cannot deserialize ciphertext from " + filename);
+			return ct;
+		}, py::arg("filename"), py::arg("sertype") = BINARY,
+			"Read a host ciphertext bound to this context. The file must use compatible context parameters.", nogil)
 		.def("Synchronize", &CC::Synchronize, nogil)
 		// GPU memory. Ciphertext.Offload() frees a ciphertext's limbs into FIDESlib's internal
 		// GPU memory pool -- cheap to reuse for more FIDESlib work, but NOT returned to the OS,
@@ -609,6 +641,10 @@ PYBIND11_MODULE(_core, m) {
 				return cc.MakeCKKSPackedPlaintext(value, noiseScaleDeg, level, nullptr, slots);
 			},
 			py::arg("value"), py::arg("noiseScaleDeg") = 1, py::arg("level") = 0, py::arg("slots") = 0, nogil)
+		.def("MakeCKKSPackedPlaintext",
+			[](CC& cc, const std::vector<std::complex<double>>& value, size_t noiseScaleDeg, uint32_t level, uint32_t slots) {
+				return cc.MakeCKKSPackedPlaintext(value, noiseScaleDeg, level, nullptr, slots);
+			}, py::arg("value"), py::arg("noiseScaleDeg") = 1, py::arg("level") = 0, py::arg("slots") = 0, nogil)
 		.def(
 			"MakeCKKSPackedPlaintextF64",
 			[](CC& cc, py::array_t<double, py::array::c_style | py::array::forcecast> value, size_t noiseScaleDeg,
@@ -652,7 +688,7 @@ PYBIND11_MODULE(_core, m) {
 		.def("EvalAddInPlace", [](CC& cc, Ct& a, double b) { cc.EvalAddInPlace(a, b); }, nogil)
 		.def("EvalAddMany", [](CC& cc, std::vector<Ct> cts) {
 			CheckCiphertextList(cc, cts, false);
-			// Upstream GPU EvalAddMany accesses an empty reduction buffer for a singleton.
+			// A singleton returns an independent clone.
 			return cts.size() == 1 ? cts.front()->Clone() : cc.EvalAddMany(cts);
 		}, py::arg("ciphertexts"), "Sum a nonempty list, preserving inputs. A singleton returns an independent clone.", nogil)
 		.def("EvalAddManyInPlace", [](CC& cc, std::vector<Ct> cts) {
@@ -674,6 +710,71 @@ PYBIND11_MODULE(_core, m) {
 		.def("EvalMult", [](CC& cc, double a, const Ct& b) { return cc.EvalMult(a, b); }, nogil)
 		.def("EvalMultInPlace", [](CC& cc, Ct& a, Pt b) { cc.EvalMultInPlace(a, b); }, nogil)
 		.def("EvalMultInPlace", [](CC& cc, Ct& a, double b) { cc.EvalMultInPlace(a, b); }, nogil)
+		// Mutable operations may adjust operand scales/levels; Python aliases see those changes.
+		.def("EvalAddMutable", [](CC& cc, Ct a, Ct b) {
+			CheckCiphertextContext(cc, a);
+			CheckCiphertextContext(cc, b);
+			return cc.EvalAddMutable(a, b);
+		}, py::arg("a"), py::arg("b"), nogil)
+		.def("EvalAddMutable", [](CC& cc, Ct a, Pt b) {
+			CheckCiphertextContext(cc, a);
+			CheckPlaintextContext(cc, b);
+			return cc.EvalAddMutable(a, b);
+		}, py::arg("a"), py::arg("b"), nogil)
+		.def("EvalAddMutable", [](CC& cc, Pt a, Ct b) {
+			CheckPlaintextContext(cc, a);
+			CheckCiphertextContext(cc, b);
+			return cc.EvalAddMutable(a, b);
+		}, py::arg("a"), py::arg("b"), nogil)
+		.def("EvalAddMutableInPlace", [](CC& cc, Ct a, Ct b) {
+			CheckCiphertextContext(cc, a);
+			CheckCiphertextContext(cc, b);
+			cc.EvalAddMutableInPlace(a, b);
+		}, py::arg("a"), py::arg("b"), nogil)
+		.def("EvalSubMutable", [](CC& cc, Ct a, Ct b) {
+			CheckCiphertextContext(cc, a);
+			CheckCiphertextContext(cc, b);
+			return cc.EvalSubMutable(a, b);
+		}, py::arg("a"), py::arg("b"), nogil)
+		.def("EvalSubMutable", [](CC& cc, Ct a, Pt b) {
+			CheckCiphertextContext(cc, a);
+			CheckPlaintextContext(cc, b);
+			return cc.EvalSubMutable(a, b);
+		}, py::arg("a"), py::arg("b"), nogil)
+		.def("EvalSubMutable", [](CC& cc, Pt a, Ct b) {
+			CheckPlaintextContext(cc, a);
+			CheckCiphertextContext(cc, b);
+			return cc.EvalSubMutable(a, b);
+		}, py::arg("a"), py::arg("b"), nogil)
+		.def("EvalSubMutableInPlace", [](CC& cc, Ct a, Ct b) {
+			CheckCiphertextContext(cc, a);
+			CheckCiphertextContext(cc, b);
+			cc.EvalSubMutableInPlace(a, b);
+		}, py::arg("a"), py::arg("b"), nogil)
+		.def("EvalMultMutable", [](CC& cc, Ct a, Ct b) {
+			CheckCiphertextContext(cc, a);
+			CheckCiphertextContext(cc, b);
+			return cc.EvalMultMutable(a, b);
+		}, py::arg("a"), py::arg("b"), nogil)
+		.def("EvalMultMutable", [](CC& cc, Ct a, Pt b) {
+			CheckCiphertextContext(cc, a);
+			CheckPlaintextContext(cc, b);
+			return cc.EvalMultMutable(a, b);
+		}, py::arg("a"), py::arg("b"), nogil)
+		.def("EvalMultMutable", [](CC& cc, Pt a, Ct b) {
+			CheckPlaintextContext(cc, a);
+			CheckCiphertextContext(cc, b);
+			return cc.EvalMultMutable(a, b);
+		}, py::arg("a"), py::arg("b"), nogil)
+		.def("EvalMultMutableInPlace", [](CC& cc, Ct a, Ct b) {
+			CheckCiphertextContext(cc, a);
+			CheckCiphertextContext(cc, b);
+			cc.EvalMultMutableInPlace(a, b);
+		}, py::arg("a"), py::arg("b"), nogil)
+		.def("EvalSquareMutable", [](CC& cc, Ct ct) {
+			CheckCiphertextContext(cc, ct);
+			return cc.EvalSquareMutable(ct);
+		}, py::arg("ciphertext"), nogil)
 		// Square / Negate
 		.def("EvalSquare", &CC::EvalSquare, nogil)
 		.def("EvalNegate", &CC::EvalNegate, nogil)
@@ -732,18 +833,31 @@ PYBIND11_MODULE(_core, m) {
 			 py::arg("dim1") = std::vector<uint32_t>{ 0, 0 }, py::arg("slots") = 0, py::arg("correctionFactor") = 0,
 			 py::arg("precompute") = true, py::arg("btsfirstboot") = false, nogil)
 		.def("EvalBootstrapKeyGen", &CC::EvalBootstrapKeyGen, py::arg("privateKey"), py::arg("slots"), nogil)
+		.def("EvalBootstrapStCFirst", &CC::EvalBootstrapStCFirst,
+			py::arg("ciphertext"), py::arg("numIterations") = 1, py::arg("precision") = 0, nogil)
 		.def("EvalBootstrap", &CC::EvalBootstrap, py::arg("ciphertext"), py::arg("numIterations") = 1,
 			 py::arg("precision") = 0, py::arg("prescaled") = false, nogil)
 		.def(
 			"EvalBootstrapInPlace",
 			[](CC& cc, const Ct& ct, uint32_t numIterations, uint32_t precision, bool prescaled) {
-				auto refreshed = cc.EvalBootstrap(ct, numIterations, precision, prescaled);
-				ReplaceCiphertextPayload(*ct, *refreshed);
+				CheckCiphertextContext(cc, ct);
+				// GPU updates the payload directly; CPU may replace the shared_ptr.
+				auto refreshed = ct;
+				cc.EvalBootstrapInPlace(refreshed, numIterations, precision, prescaled);
+				if (refreshed.get() != ct.get())
+					ReplaceCiphertextPayload(*ct, *refreshed);
 			},
 			py::arg("ciphertext"), py::arg("numIterations") = 1, py::arg("precision") = 0,
 			py::arg("prescaled") = false, nogil);
 
 	// ---- Free functions ----
+
+	m.def("SerializeToFile", [](const std::string& filename, const Ct& ct, SerType sertype) {
+		if (!ct)
+			throw py::value_error("ciphertext must be non-null");
+		return Serial::SerializeToFile(filename, ct, sertype);
+	}, py::arg("filename"), py::arg("ciphertext"), py::arg("sertype") = BINARY,
+		"Serialize the current CPU/GPU ciphertext value, including its context, without a secret key.", nogil);
 
 	m.def(
 		"GenCryptoContext", [](Params& params) { return GenCryptoContext(params); }, py::arg("params"), nogil);

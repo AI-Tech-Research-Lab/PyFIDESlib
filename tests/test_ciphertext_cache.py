@@ -185,7 +185,9 @@ def s_accounting(scn):
     # ciphertext costs exactly as much VRAM as a fresh one.
     a, b = encrypt(cc, keys, 0), encrypt(cc, keys, 1)
     before = cc.GetCiphertextCacheResidentBytes()
-    deep = cc.Rescale(cc.EvalMult(a, b))
+    # AUTO scaling defers rescaling until the next multiplication; explicit Rescale
+    # now matches OpenFHE and is a no-op for this technique.
+    deep = cc.EvalMult(cc.EvalMult(a, b), 1.0)
     after = cc.GetCiphertextCacheResidentBytes()
     scn.log(f"level {a.GetLevel()} -> {deep.GetLevel()}: that ciphertext accounts for "
             f"{after - before:,} bytes (a fresh one is {one:,})")

@@ -21,7 +21,9 @@ export PYTHONPATH=/path/to/PyFIDESlib
 ```
 
 The build clones and compiles a pinned FIDESlib fork, and the OpenFHE that FIDESlib vendors,
-inside `build/`. The fork and commit are `FIDESLIB_REPOSITORY` / `FIDESLIB_GIT_TAG` in
+inside `build/`. This version targets **FIDESlib 2.2.0 and patched OpenFHE 1.6.1**,
+including the fork's VRAM caches. CMake rebuilds OpenFHE when the installed version is
+incompatible with the pin. The fork and commit are `FIDESLIB_REPOSITORY` / `FIDESLIB_GIT_TAG` in
 `CMakeLists.txt`. The first build takes 10-30 minutes because it compiles OpenFHE. The module
 only works with the Python minor version it was built with.
 
@@ -67,8 +69,9 @@ Things that differ from openfhe-python:
   from `fhe.accumulate_rotation_indices(n, stride)`. Every index you rotate by needs its own
   rotation key.
 - **Running out of GPU memory kills the process.** No exception is raised.
-- **Bootstrapping is strict about its parameters**, and it can segfault or decrypt to noise
-  instead of raising. Start from `examples/04_bootstrap.py`.
+- **Bootstrapping requires sufficient depth, compatible scaling parameters and matching
+  precomputation.** Start from `examples/04_bootstrap.py`; StC-first needs more levels
+  remaining on entry than the standard pipeline.
 
 For a convolution with scalar weights shared across slots, combine rotated ciphertexts
 with the GPU weighted-sum primitive:
@@ -147,12 +150,70 @@ Additional arithmetic helpers work on both CPU and GPU and release the GIL:
 
 The in-place helpers return `None`. Inputs must belong to the calling context;
 ciphertexts being added must use the same key. Squaring and negation follow the scaling
-behavior of the existing `EvalSquare` and `EvalNegate`: on GPU, negation is implemented
-as multiplication by -1, so its noise scale degree can change. `SetLevel` uses FIDESlib's
-level adjustment for the selected scaling technique, and accepts levels from
-`ct.GetLevel()` through the context's multiplicative depth. Use
+behavior of the existing `EvalSquare` and `EvalNegate`. Negation preserves the level,
+scaling factor and noise scale degree. `SetLevel` only drops modulus towers: it preserves
+the scaling factor and noise scale degree, accepts levels from `ct.GetLevel()` through
+the context's multiplicative depth, and does not perform a rescale. Use
 `python tests/test_arithmetic_helpers.py` to check these bindings, including CPU behavior;
 the same `WSUM_SCALING` and `WSUM_DEVICES` settings apply.
+
+## FIDESlib 2.2.0 operations
+
+`cc.EvalBootstrap(ct, numIterations=1, precision=0, prescaled=False)` supports one or two
+iterations. The second bootstraps the first pass's error to refine precision, at the cost
+of another pass. `precision` is the estimated precision in bits of one pass, used by the
+correction; it is ignored for a single iteration. `cc.EvalBootstrapInPlace(...)` keeps
+Python aliases of its ciphertext valid and uses the native in-place GPU path.
+
+The new StC-first pipeline runs SlotsToCoeffs before ModRaise, followed by CoeffsToSlots
+and approximate modular reduction. It requires its own setup:
+
+```python
+cc.EvalBootstrapSetup([3, 3], [0, 0], slots, btsfirstboot=True)
+cc.EvalBootstrapKeyGen(keys.secretKey, slots)
+cc.LoadContext(keys.publicKey)
+# ct must still have enough levels for the initial SlotsToCoeffs transform.
+fresh = cc.EvalBootstrapStCFirst(ct, numIterations=2, precision=12)
+# EvalBootstrap / EvalBootstrapInPlace also dispatch according to this setup.
+```
+
+The budget order remains `[CoeffsToSlots, SlotsToCoeffs]`. Standard and StC-first cannot
+share precomputation for the same slot count in one context. StC-first must run earlier
+in the multiplication chain; the example computes its input level explicitly. Try
+`python examples/04_bootstrap.py --stc-first --iterations 2 --precision 12`.
+
+For complex data, call `params.SetCKKSDataType(fhe.COMPLEX)` **before** `GenCryptoContext`.
+`GetCKKSDataType()` returns `fhe.REAL` (the default) or `fhe.COMPLEX`.
+`MakeCKKSPackedPlaintext` accepts real or complex sequences; read complex results with
+`pt.GetCKKSPackedValue()`. `MakeCKKSPackedPlaintextF64` remains a real-array fast path.
+Ciphertexts expose `GetSlots()` and `GetScalingFactor()` as well as level and noise degree.
+
+`EvalAddMutable`, `EvalSubMutable` and `EvalMultMutable` accept ciphertext/ciphertext,
+ciphertext/plaintext and plaintext/ciphertext pairs. They return a result and may modify
+operand scales/levels, visible through existing Python aliases. Their `*MutableInPlace`
+forms accept two ciphertexts, overwrite the first, may adjust the second, and return
+`None`. `EvalSquareMutable(ct)` also returns a result and may adjust its input. Clone
+inputs first if their state must be preserved. These operations work on CPU and GPU.
+With `FIXEDMANUAL`, align scales/noise degrees explicitly before addition or subtraction,
+using `RescaleInPlace` as needed, just as with the corresponding OpenFHE operations.
+
+To export a computed ciphertext without a secret key:
+
+```python
+cc.UnloadCiphertext(result)                 # materialize CPU data and release the GPU handle
+assert fhe.SerializeToFile("result.bin", result, fhe.BINARY)
+restored = cc.DeserializeCiphertextFromFile("result.bin", fhe.BINARY)
+```
+
+`SerializeToFile` also works directly on loaded or offloaded ciphertexts and returns a
+boolean. Deserialization returns a host ciphertext attached to the calling context and
+raises on failure; the file must use compatible context parameters. `fhe.JSON` is also
+supported. `UnloadCiphertext` differs from `ct.Offload()`: it produces the ordinary CPU
+ciphertext used for export, while offload retains a snapshot for GPU reload.
+
+Run `python tests/test_upstream_220.py` for CPU/GPU mutable arithmetic, complex data,
+serialization, and 19 isolated bootstrap configurations. Select GPUs through
+`CUDA_VISIBLE_DEVICES`; for two GPUs also set `PYFIDES_TEST_DEVICES=0,1`.
 
 The `examples/` directory has, in order:
 - `00_onboarding.py`, a first walkthrough;
@@ -207,14 +268,19 @@ now, and `Pin*()` (the bootstrap cache has no `Pin*()`). Things to know:
 - **Budgets are soft.** An operation keeps everything it is currently using in VRAM, such as
   the keys of a hoisted rotation, a bootstrap stage, or the operands of an operation. Peak VRAM
   is also higher than the sum of the budgets, because of the operations' own working memory.
-  Size the budgets from a measured peak.
+  Size the budgets from a measured peak. Compression can make bootstrap stages very
+  different in size; under a small bootstrap budget, MRU may still reload every stage.
+  Use `GetBootstrapCacheLoadedBytes()` to measure the actual transfer traffic.
 - **Rotation keys and bootstrap matrices need the budget before `LoadContext()`.** Only objects
   built under a finite budget keep the host copy they reload from. Calling these setters after
   `LoadContext()` only changes the limit for objects that already have one.
-- **Host memory.** Evicted keys, matrices and ciphertexts are kept in host RAM, as much as the
-  VRAM they would use. Keys and matrices use page-locked memory, so they reload at PCIe speed.
+- **Host memory.** Evicted keys, matrices and ciphertexts keep snapshots in host RAM.
+  Keys and matrices use page-locked buffers for fast reloads. Matrix row padding can make
+  these snapshots larger than the compressed GPU payload.
 - **Measure with `Get*ResidentBytes()`, not `nvidia-smi`.** Freed VRAM goes back to FIDESlib's
   allocator, not to the driver. `cc.TrimGPUMemoryPool()` returns idle slabs to the driver.
+  Counters report owned payload bytes; the allocator rounds small compressed limbs up to
+  at least 1 KiB, so its live/reserved bytes can be higher.
 - **Shared limits.** Contexts built from identical parameters share one GPU context, and with
   it the rotation-key and bootstrap budgets.
 - **Freeing destroyed ciphertexts.** FIDESlib also keeps destroyed ciphertext polynomials for

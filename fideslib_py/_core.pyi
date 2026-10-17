@@ -4,13 +4,375 @@ Python bindings for FIDESlib (CKKS on GPU, interoperable with OpenFHE)
 from __future__ import annotations
 import numpy
 import typing
-__all__: list[str] = ['ADVANCEDSHE', 'CCParams', 'Ciphertext', 'CryptoContext', 'FHE', 'FIXEDAUTO', 'FIXEDMANUAL', 'FLEXIBLEAUTO', 'FLEXIBLEAUTOEXT', 'GAUSSIAN', 'GenCryptoContext', 'GetChebyshevCoefficients', 'GetGPUMemoryPoolStats', 'HEStd_128_classic', 'HEStd_128_quantum', 'HEStd_192_classic', 'HEStd_192_quantum', 'HEStd_256_classic', 'HEStd_256_quantum', 'HEStd_NotSet', 'HYBRID', 'KEYSWITCH', 'KeyPair', 'KeySwitchTechnique', 'LEVELEDSHE', 'MULTIPARTY', 'PKE', 'PKESchemeFeature', 'PRE', 'Plaintext', 'PrivateKey', 'PublicKey', 'SCHEMESWITCH', 'SPARSE_ENCAPSULATED', 'SPARSE_TERNARY', 'ScalingTechnique', 'SecretKeyDist', 'SecurityLevel', 'UNIFORM_TERNARY', 'accumulate_rotation_indices', 'convolution_rotation_indices']
+__all__: list[str] = ['ADVANCEDSHE', 'BINARY', 'CCParams', 'CKKSDataType', 'COMPLEX', 'Ciphertext', 'CryptoContext', 'FHE', 'FIXEDAUTO', 'FIXEDMANUAL', 'FLEXIBLEAUTO', 'FLEXIBLEAUTOEXT', 'GAUSSIAN', 'GenCryptoContext', 'GetChebyshevCoefficients', 'GetGPUMemoryPoolStats', 'HEStd_128_classic', 'HEStd_128_quantum', 'HEStd_192_classic', 'HEStd_192_quantum', 'HEStd_256_classic', 'HEStd_256_quantum', 'HEStd_NotSet', 'HYBRID', 'JSON', 'KEYSWITCH', 'KeyPair', 'KeySwitchTechnique', 'LEVELEDSHE', 'MULTIPARTY', 'PKE', 'PKESchemeFeature', 'PRE', 'Plaintext', 'PrivateKey', 'PublicKey', 'REAL', 'SCHEMESWITCH', 'SPARSE_ENCAPSULATED', 'SPARSE_TERNARY', 'ScalingTechnique', 'SecretKeyDist', 'SecurityLevel', 'SerType', 'SerializeToFile', 'UNIFORM_TERNARY', 'accumulate_rotation_indices', 'convolution_rotation_indices']
+class PKESchemeFeature:
+    """
+    Members:
+
+      PKE
+
+      KEYSWITCH
+
+      PRE
+
+      LEVELEDSHE
+
+      ADVANCEDSHE
+
+      MULTIPARTY
+
+      FHE
+
+      SCHEMESWITCH
+    """
+    ADVANCEDSHE: typing.ClassVar[PKESchemeFeature]
+    FHE: typing.ClassVar[PKESchemeFeature]
+    KEYSWITCH: typing.ClassVar[PKESchemeFeature]
+    LEVELEDSHE: typing.ClassVar[PKESchemeFeature]
+    MULTIPARTY: typing.ClassVar[PKESchemeFeature]
+    PKE: typing.ClassVar[PKESchemeFeature]
+    PRE: typing.ClassVar[PKESchemeFeature]
+    SCHEMESWITCH: typing.ClassVar[PKESchemeFeature]
+    __members__: typing.ClassVar[dict[str, PKESchemeFeature]]
+    def __eq__(self, other: typing.Any) -> bool:
+        ...
+    def __getstate__(self) -> int:
+        ...
+    def __hash__(self) -> int:
+        ...
+    def __index__(self) -> int:
+        ...
+    def __init__(self, value: int) -> None:
+        ...
+    def __int__(self) -> int:
+        ...
+    def __ne__(self, other: typing.Any) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setstate__(self, state: int) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
+    @property
+    def name(self) -> str:
+        ...
+    @property
+    def value(self) -> int:
+        ...
+class ScalingTechnique:
+    """
+    Members:
+
+      FIXEDMANUAL
+
+      FIXEDAUTO
+
+      FLEXIBLEAUTO
+
+      FLEXIBLEAUTOEXT
+    """
+    FIXEDAUTO: typing.ClassVar[ScalingTechnique]
+    FIXEDMANUAL: typing.ClassVar[ScalingTechnique]
+    FLEXIBLEAUTO: typing.ClassVar[ScalingTechnique]
+    FLEXIBLEAUTOEXT: typing.ClassVar[ScalingTechnique]
+    __members__: typing.ClassVar[dict[str, ScalingTechnique]]
+    def __eq__(self, other: typing.Any) -> bool:
+        ...
+    def __getstate__(self) -> int:
+        ...
+    def __hash__(self) -> int:
+        ...
+    def __index__(self) -> int:
+        ...
+    def __init__(self, value: int) -> None:
+        ...
+    def __int__(self) -> int:
+        ...
+    def __ne__(self, other: typing.Any) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setstate__(self, state: int) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
+    @property
+    def name(self) -> str:
+        ...
+    @property
+    def value(self) -> int:
+        ...
+class CKKSDataType:
+    """
+    Members:
+
+      REAL
+
+      COMPLEX
+    """
+    COMPLEX: typing.ClassVar[CKKSDataType]
+    REAL: typing.ClassVar[CKKSDataType]
+    __members__: typing.ClassVar[dict[str, CKKSDataType]]
+    def __eq__(self, other: typing.Any) -> bool:
+        ...
+    def __getstate__(self) -> int:
+        ...
+    def __hash__(self) -> int:
+        ...
+    def __index__(self) -> int:
+        ...
+    def __init__(self, value: int) -> None:
+        ...
+    def __int__(self) -> int:
+        ...
+    def __ne__(self, other: typing.Any) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setstate__(self, state: int) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
+    @property
+    def name(self) -> str:
+        ...
+    @property
+    def value(self) -> int:
+        ...
+class SerType:
+    """
+    Members:
+
+      BINARY
+
+      JSON
+    """
+    BINARY: typing.ClassVar[SerType]
+    JSON: typing.ClassVar[SerType]
+    __members__: typing.ClassVar[dict[str, SerType]]
+    def __eq__(self, other: typing.Any) -> bool:
+        ...
+    def __getstate__(self) -> int:
+        ...
+    def __hash__(self) -> int:
+        ...
+    def __index__(self) -> int:
+        ...
+    def __init__(self, value: int) -> None:
+        ...
+    def __int__(self) -> int:
+        ...
+    def __ne__(self, other: typing.Any) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setstate__(self, state: int) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
+    @property
+    def name(self) -> str:
+        ...
+    @property
+    def value(self) -> int:
+        ...
+class KeySwitchTechnique:
+    """
+    Members:
+
+      HYBRID
+    """
+    HYBRID: typing.ClassVar[KeySwitchTechnique]
+    __members__: typing.ClassVar[dict[str, KeySwitchTechnique]]
+    def __eq__(self, other: typing.Any) -> bool:
+        ...
+    def __getstate__(self) -> int:
+        ...
+    def __hash__(self) -> int:
+        ...
+    def __index__(self) -> int:
+        ...
+    def __init__(self, value: int) -> None:
+        ...
+    def __int__(self) -> int:
+        ...
+    def __ne__(self, other: typing.Any) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setstate__(self, state: int) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
+    @property
+    def name(self) -> str:
+        ...
+    @property
+    def value(self) -> int:
+        ...
+class SecretKeyDist:
+    """
+    Members:
+
+      GAUSSIAN
+
+      UNIFORM_TERNARY
+
+      SPARSE_TERNARY
+
+      SPARSE_ENCAPSULATED
+    """
+    GAUSSIAN: typing.ClassVar[SecretKeyDist]
+    SPARSE_ENCAPSULATED: typing.ClassVar[SecretKeyDist]
+    SPARSE_TERNARY: typing.ClassVar[SecretKeyDist]
+    UNIFORM_TERNARY: typing.ClassVar[SecretKeyDist]
+    __members__: typing.ClassVar[dict[str, SecretKeyDist]]
+    def __eq__(self, other: typing.Any) -> bool:
+        ...
+    def __getstate__(self) -> int:
+        ...
+    def __hash__(self) -> int:
+        ...
+    def __index__(self) -> int:
+        ...
+    def __init__(self, value: int) -> None:
+        ...
+    def __int__(self) -> int:
+        ...
+    def __ne__(self, other: typing.Any) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setstate__(self, state: int) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
+    @property
+    def name(self) -> str:
+        ...
+    @property
+    def value(self) -> int:
+        ...
+class SecurityLevel:
+    """
+    Members:
+
+      HEStd_128_classic
+
+      HEStd_192_classic
+
+      HEStd_256_classic
+
+      HEStd_128_quantum
+
+      HEStd_192_quantum
+
+      HEStd_256_quantum
+
+      HEStd_NotSet
+    """
+    HEStd_128_classic: typing.ClassVar[SecurityLevel]
+    HEStd_128_quantum: typing.ClassVar[SecurityLevel]
+    HEStd_192_classic: typing.ClassVar[SecurityLevel]
+    HEStd_192_quantum: typing.ClassVar[SecurityLevel]
+    HEStd_256_classic: typing.ClassVar[SecurityLevel]
+    HEStd_256_quantum: typing.ClassVar[SecurityLevel]
+    HEStd_NotSet: typing.ClassVar[SecurityLevel]
+    __members__: typing.ClassVar[dict[str, SecurityLevel]]
+    def __eq__(self, other: typing.Any) -> bool:
+        ...
+    def __getstate__(self) -> int:
+        ...
+    def __hash__(self) -> int:
+        ...
+    def __index__(self) -> int:
+        ...
+    def __init__(self, value: int) -> None:
+        ...
+    def __int__(self) -> int:
+        ...
+    def __ne__(self, other: typing.Any) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setstate__(self, state: int) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
+    @property
+    def name(self) -> str:
+        ...
+    @property
+    def value(self) -> int:
+        ...
+class PublicKey:
+    pass
+class PrivateKey:
+    pass
+class KeyPair:
+    @property
+    def publicKey(self) -> PublicKey:
+        ...
+    @property
+    def secretKey(self) -> PrivateKey:
+        ...
+class Plaintext:
+    def GetCKKSPackedValue(self) -> list[complex]:
+        ...
+    def GetLevel(self) -> int:
+        ...
+    def GetLogPrecision(self) -> float:
+        ...
+    def GetRealPackedValue(self) -> list[float]:
+        ...
+    def IsLoadedOnDevice(self) -> bool:
+        ...
+    def SetLength(self, length: int) -> None:
+        ...
+    def SetSlots(self, slots: int) -> None:
+        ...
+    def UnloadFromDevice(self) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
+class Ciphertext:
+    def Clone(self) -> Ciphertext:
+        ...
+    def GetLevel(self) -> int:
+        ...
+    def GetNoiseScaleDeg(self) -> int:
+        ...
+    def GetScalingFactor(self) -> float:
+        ...
+    def GetSlots(self) -> int:
+        ...
+    def IsOffloaded(self) -> bool:
+        ...
+    def Offload(self) -> None:
+        ...
+    def Reload(self) -> None:
+        ...
+    def SetSlots(self, slots: int) -> None:
+        ...
+    def dotProductPt(self, ctxs: list[Ciphertext], pts: list[Plaintext]) -> None:
+        """
+        Overwrite this ciphertext with sum(ctxs[i]*pts[i]) on GPU, without rescaling. All operands require the same level/context and degree 1. The receiver may be an input.
+        """
+    def evalLinearWSumMutable(self, n: int, ctxs: list[Ciphertext], weights: list[float]) -> None:
+        """
+        Overwrite this ciphertext with the weighted sum of the first n inputs (GPU only). Inputs need noise scale degree 1 and the same context/key. No rescale is performed; the result has noise scale degree 2. The destination may also be an input.
+        """
 class CCParams:
     def GetBatchSize(self) -> int:
+        ...
+    def GetCKKSDataType(self) -> CKKSDataType:
         ...
     def GetMultiplicativeDepth(self) -> int:
         ...
     def SetBatchSize(self, arg0: int) -> None:
+        ...
+    def SetCKKSDataType(self, arg0: CKKSDataType) -> None:
         ...
     def SetCiphertextAutoload(self, arg0: bool) -> None:
         ...
@@ -40,57 +402,23 @@ class CCParams:
         ...
     def __init__(self) -> None:
         ...
-class Ciphertext:
-    def dotProductPt(self, ctxs: list[Ciphertext], pts: list[Plaintext]) -> None:
-        """Overwrite self with sum(ctxs[i]*pts[i]) on GPU, without rescaling."""
-        ...
-    def evalLinearWSumMutable(self, n: int, ctxs: list[Ciphertext], weights: list[float]) -> None:
-        """Overwrite self with a weighted sum on GPU, without rescaling (result degree 2)."""
-        ...
-    def Clone(self) -> Ciphertext:
-        ...
-    def GetLevel(self) -> int:
-        ...
-    def GetNoiseScaleDeg(self) -> int:
-        ...
-    def IsOffloaded(self) -> bool:
-        ...
-    def Offload(self) -> None:
-        ...
-    def Reload(self) -> None:
-        ...
-    def SetSlots(self, slots: int) -> None:
-        ...
 class CryptoContext:
-    def EvalAddMany(self, ciphertexts: list[Ciphertext]) -> Ciphertext:
-        """Sum a nonempty list while preserving inputs; a singleton returns a clone."""
-        ...
-    def EvalAddManyInPlace(self, ciphertexts: list[Ciphertext]) -> None:
-        """Reduce into ciphertexts[0]; other inputs may change. Repeated objects are rejected."""
-        ...
-    def EvalSquareInPlace(self, ciphertext: Ciphertext) -> None:
-        """Square in place with the same scaling behavior as EvalSquare."""
-        ...
-    def EvalNegateInPlace(self, ciphertext: Ciphertext) -> None:
-        """Negate in place with the same scaling behavior as EvalNegate."""
-        ...
-    def SetLevel(self, ciphertext: Ciphertext, level: int) -> None:
-        """Drop to a larger Python level index in place; consumed levels cannot be restored."""
-        ...
-    def EvalFastRotation(self, ciphertext: Ciphertext, indices: list[int]) -> list[Ciphertext]:
-        """Return GPU hoisted rotations in index order, preserving the input."""
-        ...
-    def ConvolutionTransformInPlace(self, ciphertext: Ciphertext, gStep: int, bStep: int, pts: list[Plaintext], indexes: list[int], stride: int = 1, rowSize: int = 0) -> None:
-        """Apply a GPU convolution transform, leaving a degree-2 result without final rescale."""
-        ...
     def AccumulateSum(self, ciphertext: Ciphertext, slots: int, stride: int = 1) -> Ciphertext:
         ...
     def AccumulateSumInPlace(self, ciphertext: Ciphertext, slots: int, stride: int = 1) -> None:
         ...
     def ClearAuxiliaryPolyPool(self) -> None:
         ...
+    def ConvolutionTransformInPlace(self, ciphertext: Ciphertext, gStep: int, bStep: int, pts: list[Plaintext], indexes: list[int], stride: int = 1, rowSize: int = 0) -> None:
+        """
+        Apply a GPU convolution transform in place. gStep must be a power of two; pts has gStep*bStep entries and indexes has bStep entries. Returns a degree-2 result without a final rescale; degree-2 input is rescaled first.
+        """
     def Decrypt(self, privateKey: PrivateKey, ciphertext: Ciphertext) -> Plaintext:
         ...
+    def DeserializeCiphertextFromFile(self, filename: str, sertype: SerType = SerType.BINARY) -> Ciphertext:
+        """
+        Read a host ciphertext bound to this context. The file must use compatible context parameters.
+        """
     def Enable(self, feature: PKESchemeFeature) -> None:
         ...
     def Encrypt(self, publicKey: PublicKey, plaintext: Plaintext) -> Ciphertext:
@@ -116,6 +444,25 @@ class CryptoContext:
     @typing.overload
     def EvalAddInPlace(self, arg0: Ciphertext, arg1: float) -> None:
         ...
+    def EvalAddMany(self, ciphertexts: list[Ciphertext]) -> Ciphertext:
+        """
+        Sum a nonempty list, preserving inputs. A singleton returns an independent clone.
+        """
+    def EvalAddManyInPlace(self, ciphertexts: list[Ciphertext]) -> None:
+        """
+        Reduce a nonempty list into ciphertexts[0]. Other inputs may also be modified. Repeated ciphertext objects are rejected.
+        """
+    @typing.overload
+    def EvalAddMutable(self, a: Ciphertext, b: Ciphertext) -> Ciphertext:
+        ...
+    @typing.overload
+    def EvalAddMutable(self, a: Ciphertext, b: Plaintext) -> Ciphertext:
+        ...
+    @typing.overload
+    def EvalAddMutable(self, a: Plaintext, b: Ciphertext) -> Ciphertext:
+        ...
+    def EvalAddMutableInPlace(self, a: Ciphertext, b: Ciphertext) -> None:
+        ...
     def EvalBootstrap(self, ciphertext: Ciphertext, numIterations: int = 1, precision: int = 0, prescaled: bool = False) -> Ciphertext:
         ...
     def EvalBootstrapInPlace(self, ciphertext: Ciphertext, numIterations: int = 1, precision: int = 0, prescaled: bool = False) -> None:
@@ -124,10 +471,16 @@ class CryptoContext:
         ...
     def EvalBootstrapSetup(self, levelBudget: list[int] = [5, 4], dim1: list[int] = [0, 0], slots: int = 0, correctionFactor: int = 0, precompute: bool = True, btsfirstboot: bool = False) -> None:
         ...
+    def EvalBootstrapStCFirst(self, ciphertext: Ciphertext, numIterations: int = 1, precision: int = 0) -> Ciphertext:
+        ...
     def EvalChebyshevSeries(self, ciphertext: Ciphertext, coefficients: list[float], a: float, b: float) -> Ciphertext:
         ...
     def EvalChebyshevSeriesInPlace(self, ciphertext: Ciphertext, coefficients: list[float], a: float, b: float) -> None:
         ...
+    def EvalFastRotation(self, ciphertext: Ciphertext, indices: list[int]) -> list[Ciphertext]:
+        """
+        Return GPU hoisted rotations in the order of indices. No precomputation handle is needed. Zero indices return independent copies; the input is preserved.
+        """
     @typing.overload
     def EvalMult(self, arg0: Ciphertext, arg1: Ciphertext) -> Ciphertext:
         ...
@@ -148,8 +501,23 @@ class CryptoContext:
         ...
     def EvalMultKeyGen(self, privateKey: PrivateKey) -> None:
         ...
+    @typing.overload
+    def EvalMultMutable(self, a: Ciphertext, b: Ciphertext) -> Ciphertext:
+        ...
+    @typing.overload
+    def EvalMultMutable(self, a: Ciphertext, b: Plaintext) -> Ciphertext:
+        ...
+    @typing.overload
+    def EvalMultMutable(self, a: Plaintext, b: Ciphertext) -> Ciphertext:
+        ...
+    def EvalMultMutableInPlace(self, a: Ciphertext, b: Ciphertext) -> None:
+        ...
     def EvalNegate(self, arg0: Ciphertext) -> Ciphertext:
         ...
+    def EvalNegateInPlace(self, ciphertext: Ciphertext) -> None:
+        """
+        Negate a ciphertext in place, with the same scaling behavior as EvalNegate.
+        """
     def EvalRotate(self, ciphertext: Ciphertext, index: int) -> Ciphertext:
         ...
     def EvalRotateInPlace(self, ciphertext: Ciphertext, index: int) -> None:
@@ -157,6 +525,12 @@ class CryptoContext:
     def EvalRotateKeyGen(self, privateKey: PrivateKey, indexList: list[int]) -> None:
         ...
     def EvalSquare(self, arg0: Ciphertext) -> Ciphertext:
+        ...
+    def EvalSquareInPlace(self, ciphertext: Ciphertext) -> None:
+        """
+        Square a ciphertext in place, with the same scaling behavior as EvalSquare.
+        """
+    def EvalSquareMutable(self, ciphertext: Ciphertext) -> Ciphertext:
         ...
     @typing.overload
     def EvalSub(self, arg0: Ciphertext, arg1: Ciphertext) -> Ciphertext:
@@ -175,6 +549,17 @@ class CryptoContext:
         ...
     @typing.overload
     def EvalSubInPlace(self, arg0: Ciphertext, arg1: float) -> None:
+        ...
+    @typing.overload
+    def EvalSubMutable(self, a: Ciphertext, b: Ciphertext) -> Ciphertext:
+        ...
+    @typing.overload
+    def EvalSubMutable(self, a: Ciphertext, b: Plaintext) -> Ciphertext:
+        ...
+    @typing.overload
+    def EvalSubMutable(self, a: Plaintext, b: Ciphertext) -> Ciphertext:
+        ...
+    def EvalSubMutableInPlace(self, a: Ciphertext, b: Ciphertext) -> None:
         ...
     def GetAuxiliaryPolyPoolSize(self) -> int:
         ...
@@ -212,7 +597,11 @@ class CryptoContext:
         ...
     def LoadPlaintext(self, plaintext: Plaintext) -> None:
         ...
+    @typing.overload
     def MakeCKKSPackedPlaintext(self, value: list[float], noiseScaleDeg: int = 1, level: int = 0, slots: int = 0) -> Plaintext:
+        ...
+    @typing.overload
+    def MakeCKKSPackedPlaintext(self, value: list[complex], noiseScaleDeg: int = 1, level: int = 0, slots: int = 0) -> Plaintext:
         ...
     def MakeCKKSPackedPlaintextF64(self, value: numpy.ndarray[typing.Any, numpy.dtype[numpy.float64]], noiseScaleDeg: int = 1, level: int = 0, slots: int = 0) -> Plaintext:
         ...
@@ -244,6 +633,10 @@ class CryptoContext:
         ...
     def SetDevices(self, devices: list[int]) -> None:
         ...
+    def SetLevel(self, ciphertext: Ciphertext, level: int) -> None:
+        """
+        Drop a ciphertext to a larger Python level index in place; cannot restore consumed levels.
+        """
     def SetPlaintextCache(self, nbytes: int | None) -> None:
         ...
     def SetRotationKeyCache(self, nbytes: int | None) -> None:
@@ -252,263 +645,10 @@ class CryptoContext:
         ...
     def TrimGPUMemoryPool(self) -> None:
         ...
-class KeyPair:
-    @property
-    def publicKey(self) -> PublicKey:
-        ...
-    @property
-    def secretKey(self) -> PrivateKey:
-        ...
-class KeySwitchTechnique:
-    """
-    Members:
-    
-      HYBRID
-    """
-    HYBRID: typing.ClassVar[KeySwitchTechnique]  # value = <KeySwitchTechnique.HYBRID: 2>
-    __members__: typing.ClassVar[dict[str, KeySwitchTechnique]]  # value = {'HYBRID': <KeySwitchTechnique.HYBRID: 2>}
-    def __eq__(self, other: typing.Any) -> bool:
-        ...
-    def __getstate__(self) -> int:
-        ...
-    def __hash__(self) -> int:
-        ...
-    def __index__(self) -> int:
-        ...
-    def __init__(self, value: int) -> None:
-        ...
-    def __int__(self) -> int:
-        ...
-    def __ne__(self, other: typing.Any) -> bool:
-        ...
-    def __repr__(self) -> str:
-        ...
-    def __setstate__(self, state: int) -> None:
-        ...
-    def __str__(self) -> str:
-        ...
-    @property
-    def name(self) -> str:
-        ...
-    @property
-    def value(self) -> int:
-        ...
-class PKESchemeFeature:
-    """
-    Members:
-    
-      PKE
-    
-      KEYSWITCH
-    
-      PRE
-    
-      LEVELEDSHE
-    
-      ADVANCEDSHE
-    
-      MULTIPARTY
-    
-      FHE
-    
-      SCHEMESWITCH
-    """
-    ADVANCEDSHE: typing.ClassVar[PKESchemeFeature]  # value = <PKESchemeFeature.ADVANCEDSHE: 16>
-    FHE: typing.ClassVar[PKESchemeFeature]  # value = <PKESchemeFeature.FHE: 64>
-    KEYSWITCH: typing.ClassVar[PKESchemeFeature]  # value = <PKESchemeFeature.KEYSWITCH: 2>
-    LEVELEDSHE: typing.ClassVar[PKESchemeFeature]  # value = <PKESchemeFeature.LEVELEDSHE: 8>
-    MULTIPARTY: typing.ClassVar[PKESchemeFeature]  # value = <PKESchemeFeature.MULTIPARTY: 32>
-    PKE: typing.ClassVar[PKESchemeFeature]  # value = <PKESchemeFeature.PKE: 1>
-    PRE: typing.ClassVar[PKESchemeFeature]  # value = <PKESchemeFeature.PRE: 4>
-    SCHEMESWITCH: typing.ClassVar[PKESchemeFeature]  # value = <PKESchemeFeature.SCHEMESWITCH: 128>
-    __members__: typing.ClassVar[dict[str, PKESchemeFeature]]  # value = {'PKE': <PKESchemeFeature.PKE: 1>, 'KEYSWITCH': <PKESchemeFeature.KEYSWITCH: 2>, 'PRE': <PKESchemeFeature.PRE: 4>, 'LEVELEDSHE': <PKESchemeFeature.LEVELEDSHE: 8>, 'ADVANCEDSHE': <PKESchemeFeature.ADVANCEDSHE: 16>, 'MULTIPARTY': <PKESchemeFeature.MULTIPARTY: 32>, 'FHE': <PKESchemeFeature.FHE: 64>, 'SCHEMESWITCH': <PKESchemeFeature.SCHEMESWITCH: 128>}
-    def __eq__(self, other: typing.Any) -> bool:
-        ...
-    def __getstate__(self) -> int:
-        ...
-    def __hash__(self) -> int:
-        ...
-    def __index__(self) -> int:
-        ...
-    def __init__(self, value: int) -> None:
-        ...
-    def __int__(self) -> int:
-        ...
-    def __ne__(self, other: typing.Any) -> bool:
-        ...
-    def __repr__(self) -> str:
-        ...
-    def __setstate__(self, state: int) -> None:
-        ...
-    def __str__(self) -> str:
-        ...
-    @property
-    def name(self) -> str:
-        ...
-    @property
-    def value(self) -> int:
-        ...
-class Plaintext:
-    def GetCKKSPackedValue(self) -> list[complex]:
-        ...
-    def GetLevel(self) -> int:
-        ...
-    def GetLogPrecision(self) -> float:
-        ...
-    def GetRealPackedValue(self) -> list[float]:
-        ...
-    def IsLoadedOnDevice(self) -> bool:
-        ...
-    def SetLength(self, length: int) -> None:
-        ...
-    def SetSlots(self, slots: int) -> None:
-        ...
-    def UnloadFromDevice(self) -> None:
-        ...
-    def __str__(self) -> str:
-        ...
-class PrivateKey:
-    pass
-class PublicKey:
-    pass
-class ScalingTechnique:
-    """
-    Members:
-    
-      FIXEDMANUAL
-    
-      FIXEDAUTO
-    
-      FLEXIBLEAUTO
-    
-      FLEXIBLEAUTOEXT
-    """
-    FIXEDAUTO: typing.ClassVar[ScalingTechnique]  # value = <ScalingTechnique.FIXEDAUTO: 1>
-    FIXEDMANUAL: typing.ClassVar[ScalingTechnique]  # value = <ScalingTechnique.FIXEDMANUAL: 0>
-    FLEXIBLEAUTO: typing.ClassVar[ScalingTechnique]  # value = <ScalingTechnique.FLEXIBLEAUTO: 2>
-    FLEXIBLEAUTOEXT: typing.ClassVar[ScalingTechnique]  # value = <ScalingTechnique.FLEXIBLEAUTOEXT: 3>
-    __members__: typing.ClassVar[dict[str, ScalingTechnique]]  # value = {'FIXEDMANUAL': <ScalingTechnique.FIXEDMANUAL: 0>, 'FIXEDAUTO': <ScalingTechnique.FIXEDAUTO: 1>, 'FLEXIBLEAUTO': <ScalingTechnique.FLEXIBLEAUTO: 2>, 'FLEXIBLEAUTOEXT': <ScalingTechnique.FLEXIBLEAUTOEXT: 3>}
-    def __eq__(self, other: typing.Any) -> bool:
-        ...
-    def __getstate__(self) -> int:
-        ...
-    def __hash__(self) -> int:
-        ...
-    def __index__(self) -> int:
-        ...
-    def __init__(self, value: int) -> None:
-        ...
-    def __int__(self) -> int:
-        ...
-    def __ne__(self, other: typing.Any) -> bool:
-        ...
-    def __repr__(self) -> str:
-        ...
-    def __setstate__(self, state: int) -> None:
-        ...
-    def __str__(self) -> str:
-        ...
-    @property
-    def name(self) -> str:
-        ...
-    @property
-    def value(self) -> int:
-        ...
-class SecretKeyDist:
-    """
-    Members:
-    
-      GAUSSIAN
-    
-      UNIFORM_TERNARY
-    
-      SPARSE_TERNARY
-    
-      SPARSE_ENCAPSULATED
-    """
-    GAUSSIAN: typing.ClassVar[SecretKeyDist]  # value = <SecretKeyDist.GAUSSIAN: 0>
-    SPARSE_ENCAPSULATED: typing.ClassVar[SecretKeyDist]  # value = <SecretKeyDist.SPARSE_ENCAPSULATED: 3>
-    SPARSE_TERNARY: typing.ClassVar[SecretKeyDist]  # value = <SecretKeyDist.SPARSE_TERNARY: 2>
-    UNIFORM_TERNARY: typing.ClassVar[SecretKeyDist]  # value = <SecretKeyDist.UNIFORM_TERNARY: 1>
-    __members__: typing.ClassVar[dict[str, SecretKeyDist]]  # value = {'GAUSSIAN': <SecretKeyDist.GAUSSIAN: 0>, 'UNIFORM_TERNARY': <SecretKeyDist.UNIFORM_TERNARY: 1>, 'SPARSE_TERNARY': <SecretKeyDist.SPARSE_TERNARY: 2>, 'SPARSE_ENCAPSULATED': <SecretKeyDist.SPARSE_ENCAPSULATED: 3>}
-    def __eq__(self, other: typing.Any) -> bool:
-        ...
-    def __getstate__(self) -> int:
-        ...
-    def __hash__(self) -> int:
-        ...
-    def __index__(self) -> int:
-        ...
-    def __init__(self, value: int) -> None:
-        ...
-    def __int__(self) -> int:
-        ...
-    def __ne__(self, other: typing.Any) -> bool:
-        ...
-    def __repr__(self) -> str:
-        ...
-    def __setstate__(self, state: int) -> None:
-        ...
-    def __str__(self) -> str:
-        ...
-    @property
-    def name(self) -> str:
-        ...
-    @property
-    def value(self) -> int:
-        ...
-class SecurityLevel:
-    """
-    Members:
-    
-      HEStd_128_classic
-    
-      HEStd_192_classic
-    
-      HEStd_256_classic
-    
-      HEStd_128_quantum
-    
-      HEStd_192_quantum
-    
-      HEStd_256_quantum
-    
-      HEStd_NotSet
-    """
-    HEStd_128_classic: typing.ClassVar[SecurityLevel]  # value = <SecurityLevel.HEStd_128_classic: 0>
-    HEStd_128_quantum: typing.ClassVar[SecurityLevel]  # value = <SecurityLevel.HEStd_128_quantum: 3>
-    HEStd_192_classic: typing.ClassVar[SecurityLevel]  # value = <SecurityLevel.HEStd_192_classic: 1>
-    HEStd_192_quantum: typing.ClassVar[SecurityLevel]  # value = <SecurityLevel.HEStd_192_quantum: 4>
-    HEStd_256_classic: typing.ClassVar[SecurityLevel]  # value = <SecurityLevel.HEStd_256_classic: 2>
-    HEStd_256_quantum: typing.ClassVar[SecurityLevel]  # value = <SecurityLevel.HEStd_256_quantum: 5>
-    HEStd_NotSet: typing.ClassVar[SecurityLevel]  # value = <SecurityLevel.HEStd_NotSet: 6>
-    __members__: typing.ClassVar[dict[str, SecurityLevel]]  # value = {'HEStd_128_classic': <SecurityLevel.HEStd_128_classic: 0>, 'HEStd_192_classic': <SecurityLevel.HEStd_192_classic: 1>, 'HEStd_256_classic': <SecurityLevel.HEStd_256_classic: 2>, 'HEStd_128_quantum': <SecurityLevel.HEStd_128_quantum: 3>, 'HEStd_192_quantum': <SecurityLevel.HEStd_192_quantum: 4>, 'HEStd_256_quantum': <SecurityLevel.HEStd_256_quantum: 5>, 'HEStd_NotSet': <SecurityLevel.HEStd_NotSet: 6>}
-    def __eq__(self, other: typing.Any) -> bool:
-        ...
-    def __getstate__(self) -> int:
-        ...
-    def __hash__(self) -> int:
-        ...
-    def __index__(self) -> int:
-        ...
-    def __init__(self, value: int) -> None:
-        ...
-    def __int__(self) -> int:
-        ...
-    def __ne__(self, other: typing.Any) -> bool:
-        ...
-    def __repr__(self) -> str:
-        ...
-    def __setstate__(self, state: int) -> None:
-        ...
-    def __str__(self) -> str:
-        ...
-    @property
-    def name(self) -> str:
-        ...
-    @property
-    def value(self) -> int:
-        ...
+    def UnloadCiphertext(self, ciphertext: Ciphertext) -> None:
+        """
+        Download the current value to the CPU and release its GPU handle.
+        """
 def GenCryptoContext(params: CCParams) -> CryptoContext:
     ...
 def GetChebyshevCoefficients(func: typing.Callable, a: float, b: float, degree: int) -> list[float]:
@@ -517,34 +657,43 @@ def GetChebyshevCoefficients(func: typing.Callable, a: float, b: float, degree: 
     """
 def GetGPUMemoryPoolStats(device: int = 0) -> dict:
     ...
-def convolution_rotation_indices(gStep: int, bStep: int, indexes: list[int], stride: int = 1, rowSize: int = 0) -> list[int]:
-    """Rotation indices required by ConvolutionTransformInPlace; generate keys before LoadContext."""
-    ...
+def SerializeToFile(filename: str, ciphertext: Ciphertext, sertype: SerType = SerType.BINARY) -> bool:
+    """
+    Serialize the current CPU/GPU ciphertext value, including its context, without a secret key.
+    """
 def accumulate_rotation_indices(slots: int, stride: int = 1, bstep: int = 4) -> list[int]:
     """
     Rotation indices required by AccumulateSum(ct, slots, stride). Pass them to EvalRotateKeyGen.
     """
-ADVANCEDSHE: PKESchemeFeature  # value = <PKESchemeFeature.ADVANCEDSHE: 16>
-FHE: PKESchemeFeature  # value = <PKESchemeFeature.FHE: 64>
-FIXEDAUTO: ScalingTechnique  # value = <ScalingTechnique.FIXEDAUTO: 1>
-FIXEDMANUAL: ScalingTechnique  # value = <ScalingTechnique.FIXEDMANUAL: 0>
-FLEXIBLEAUTO: ScalingTechnique  # value = <ScalingTechnique.FLEXIBLEAUTO: 2>
-FLEXIBLEAUTOEXT: ScalingTechnique  # value = <ScalingTechnique.FLEXIBLEAUTOEXT: 3>
-GAUSSIAN: SecretKeyDist  # value = <SecretKeyDist.GAUSSIAN: 0>
-HEStd_128_classic: SecurityLevel  # value = <SecurityLevel.HEStd_128_classic: 0>
-HEStd_128_quantum: SecurityLevel  # value = <SecurityLevel.HEStd_128_quantum: 3>
-HEStd_192_classic: SecurityLevel  # value = <SecurityLevel.HEStd_192_classic: 1>
-HEStd_192_quantum: SecurityLevel  # value = <SecurityLevel.HEStd_192_quantum: 4>
-HEStd_256_classic: SecurityLevel  # value = <SecurityLevel.HEStd_256_classic: 2>
-HEStd_256_quantum: SecurityLevel  # value = <SecurityLevel.HEStd_256_quantum: 5>
-HEStd_NotSet: SecurityLevel  # value = <SecurityLevel.HEStd_NotSet: 6>
-HYBRID: KeySwitchTechnique  # value = <KeySwitchTechnique.HYBRID: 2>
-KEYSWITCH: PKESchemeFeature  # value = <PKESchemeFeature.KEYSWITCH: 2>
-LEVELEDSHE: PKESchemeFeature  # value = <PKESchemeFeature.LEVELEDSHE: 8>
-MULTIPARTY: PKESchemeFeature  # value = <PKESchemeFeature.MULTIPARTY: 32>
-PKE: PKESchemeFeature  # value = <PKESchemeFeature.PKE: 1>
-PRE: PKESchemeFeature  # value = <PKESchemeFeature.PRE: 4>
-SCHEMESWITCH: PKESchemeFeature  # value = <PKESchemeFeature.SCHEMESWITCH: 128>
-SPARSE_ENCAPSULATED: SecretKeyDist  # value = <SecretKeyDist.SPARSE_ENCAPSULATED: 3>
-SPARSE_TERNARY: SecretKeyDist  # value = <SecretKeyDist.SPARSE_TERNARY: 2>
-UNIFORM_TERNARY: SecretKeyDist  # value = <SecretKeyDist.UNIFORM_TERNARY: 1>
+def convolution_rotation_indices(gStep: int, bStep: int, indexes: list[int], stride: int = 1, rowSize: int = 0) -> list[int]:
+    """
+    Rotation indices required by ConvolutionTransformInPlace. Generate these keys before LoadContext.
+    """
+ADVANCEDSHE: PKESchemeFeature
+BINARY: SerType
+COMPLEX: CKKSDataType
+FHE: PKESchemeFeature
+FIXEDAUTO: ScalingTechnique
+FIXEDMANUAL: ScalingTechnique
+FLEXIBLEAUTO: ScalingTechnique
+FLEXIBLEAUTOEXT: ScalingTechnique
+GAUSSIAN: SecretKeyDist
+HEStd_128_classic: SecurityLevel
+HEStd_128_quantum: SecurityLevel
+HEStd_192_classic: SecurityLevel
+HEStd_192_quantum: SecurityLevel
+HEStd_256_classic: SecurityLevel
+HEStd_256_quantum: SecurityLevel
+HEStd_NotSet: SecurityLevel
+HYBRID: KeySwitchTechnique
+JSON: SerType
+KEYSWITCH: PKESchemeFeature
+LEVELEDSHE: PKESchemeFeature
+MULTIPARTY: PKESchemeFeature
+PKE: PKESchemeFeature
+PRE: PKESchemeFeature
+REAL: CKKSDataType
+SCHEMESWITCH: PKESchemeFeature
+SPARSE_ENCAPSULATED: SecretKeyDist
+SPARSE_TERNARY: SecretKeyDist
+UNIFORM_TERNARY: SecretKeyDist

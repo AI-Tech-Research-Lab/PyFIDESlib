@@ -1,7 +1,7 @@
 [project]
 name = "fideslib-py"
-version = "2.1.2+local"
-description = "Python bindings for FIDESlib (CKKS on GPU, patched OpenFHE 1.5.1)"
+version = "2.2.0+local"
+description = "Python bindings for FIDESlib (CKKS on GPU, patched OpenFHE 1.6.1)"
 requires-python = ">=3.12"
 authors = [{ name = "CAPS-UMU / HerMiniRocket" }]
 license = { text = "MIT" }

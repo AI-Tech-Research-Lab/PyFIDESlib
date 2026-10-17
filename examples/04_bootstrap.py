@@ -8,28 +8,18 @@ continue on the same encrypted value.
 
 Runs in seconds with ~1 GB of GPU memory (toy, NON-SECURE parameters).
 
-  READ THIS BEFORE CHANGING THE PARAMETERS. Bootstrapping is the one part of this API
-  that does not tell you when it has been set up wrong -- it segfaults, or it decrypts
-  to noise, instead of raising:
+Choose --stc-first for SlotsToCoeffs-first bootstrap, --iterations 2 for error
+correction, and --precision for the estimated single-pass precision in bits.
 
-  1. The multiplicative depth must cover the bootstrap itself. For a UNIFORM_TERNARY
-     secret that is MOD_DEPTH = 14 levels (OpenFHE's degree-44 Chebyshev approximation
-     of the modular reduction, plus its 6 double-angle iterations) plus both halves of
-     the level budget -- before the levels you actually want to use are counted. Ask for
-     less and EvalBootstrapSetup() SEGFAULTS: the leftover level count goes negative in
-     unsigned arithmetic.
-  2. FirstModSize - ScalingModSize must not exceed the correction factor OpenFHE derives
-     from the ring and slot counts (it clamps it to 7..14). The 60/50 pair used by the
-     other examples gives 10, which is one too many: the CPU path at least throws
-     "Degree [10] must be less than or equal to the correction factor [9]", the GPU path
-     just returns noise. 60/59 -- the OpenFHE bootstrapping recipe -- gives 1.
-  3. The level budget trades levels against rotation keys and time: [3, 3] here needs
-     54 keys, [1, 1] needs 130 and is ~2x slower, [5, 5] needs 28 but costs 4 more
-     levels. Note that [2, 2] and [5, 5] decrypt to noise on the GPU at 2048 slots (but
-     not at 1024 or 4096, and not on the CPU) -- so re-check the result after changing
-     it, and see tests/diag_bootstrap.py.
+The context depth must cover modular reduction, the two transform budgets and the
+levels needed by the application. UNIFORM_TERNARY uses 14 levels for modular reduction
+in this recipe. FirstModSize=60 / ScalingModSize=59 follows the OpenFHE bootstrap
+recipe. Transform budgets trade depth against rotation work; measure on your workload.
+StC-first requires levels for SlotsToCoeffs before the modulus raise, so it starts earlier
+than standard bootstrap. These toy parameters are for real values.
 """
 
+import argparse
 import sys
 import time
 from pathlib import Path
@@ -37,7 +27,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # find fideslib_py
 import fideslib_py as fhe
 
-MOD_DEPTH = 14           # see rule 1 above -- UNIFORM_TERNARY
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--stc-first", action="store_true")
+parser.add_argument("--iterations", type=int, choices=(1, 2), default=1)
+parser.add_argument("--precision", type=int, default=12)
+args = parser.parse_args()
+
+MOD_DEPTH = 14           # UNIFORM_TERNARY modular reduction
 LEVEL_BUDGET = [3, 3]    # levels spent on the two linear transforms
 SPARE = 4                # levels left usable after a bootstrap
 DEPTH = MOD_DEPTH + sum(LEVEL_BUDGET) + SPARE
@@ -51,7 +47,7 @@ params.SetSecurityLevel(fhe.HEStd_NotSet)
 params.SetSecretKeyDist(fhe.UNIFORM_TERNARY)  # what MOD_DEPTH = 14 assumes
 params.SetRingDim(RING)
 params.SetMultiplicativeDepth(DEPTH)
-params.SetScalingModSize(59)                  # 60 - 59 = 1, see rule 2 above
+params.SetScalingModSize(59)                  # 60 - 59 = 1
 params.SetFirstModSize(60)
 params.SetNumLargeDigits(3)
 params.SetBatchSize(RING // 2)
@@ -71,7 +67,7 @@ print(f"ring 2^13, depth {DEPTH} = {MOD_DEPTH} (mod reduction) + "
 # which is what pushes them to the GPU. All of these throw once the context is loaded.
 keys = cc.KeyGen()
 cc.EvalMultKeyGen(keys.secretKey)
-cc.EvalBootstrapSetup(LEVEL_BUDGET, [0, 0], SLOTS)   # precomputation, no keys yet
+cc.EvalBootstrapSetup(LEVEL_BUDGET, [0, 0], SLOTS, btsfirstboot=args.stc_first)
 cc.EvalBootstrapKeyGen(keys.secretKey, SLOTS)        # the rotation keys it needs
 
 t0 = time.time()
@@ -88,16 +84,18 @@ def dec(c, n=4):
     return p.GetRealPackedValue()
 
 
-# Encrypting straight at the bottom level is the shortcut for "a long computation just
-# finished": DEPTH - 1 multiplications would have got here the slow way.
-pt = cc.MakeCKKSPackedPlaintext(x, 1, DEPTH - 1, SLOTS)
+# Encrypt at the bootstrap input level instead of evaluating a long multiplication chain.
+# StC-first needs LEVEL_BUDGET[1] levels for its initial SlotsToCoeffs, plus overhead.
+input_level = DEPTH + 1 - (LEVEL_BUDGET[1] + 2) if args.stc_first else DEPTH - 1
+pt = cc.MakeCKKSPackedPlaintext(x, 1, input_level, SLOTS)
 ct = cc.Encrypt(keys.publicKey, pt)
 print(f"\nciphertext is at level {ct.GetLevel()} of {DEPTH}: "
-      f"{DEPTH - ct.GetLevel()} level(s) left, a multiplication chain ends here")
+      f"{DEPTH - ct.GetLevel()} level(s) left before refresh")
 
 # ---------------------------------------------------------------- bootstrap
 t0 = time.time()
-fresh = cc.EvalBootstrap(ct)
+bootstrap = cc.EvalBootstrapStCFirst if args.stc_first else cc.EvalBootstrap
+fresh = bootstrap(ct, args.iterations, args.precision)
 got = dec(fresh)  # every Eval* only enqueues: the decrypt is what waits for the GPU
 print(f"EvalBootstrap (timed with the decrypt that waits on it): {time.time() - t0:.1f}s")
 print(f"back at level {fresh.GetLevel()}: {DEPTH - fresh.GetLevel()} level(s) usable again")
@@ -120,9 +118,6 @@ print(f"\nx^4 on the refreshed ciphertext: {[round(v, 6) for v in got]} "
       f"vs {[round(v, 6) for v in expected]}")
 assert max(abs(a - b) for a, b in zip(got, expected)) < 1e-3, "x^4 after bootstrap is wrong"
 
-# Bootstrapping keys are ordinary rotation keys and by far the largest VRAM tenant here
-# (54 of them, ~688 MB at these parameters). SetRotationKeyCache() bounds them, and
-# SetBootstrapCache() bounds the CoeffsToSlots/SlotsToCoeffs matrices, the next largest --
-# see "VRAM cache" in the README. Both must be
-# called before LoadContext().
+# SetRotationKeyCache() bounds rotation-key VRAM and SetBootstrapCache() bounds the
+# CoeffsToSlots/SlotsToCoeffs matrices. Set both before LoadContext(); see the README.
 print("\nAll checks passed.")

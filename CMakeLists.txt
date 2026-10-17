@@ -19,27 +19,8 @@ if (NOT DEFINED FIDESLIB_REPOSITORY)
     set(FIDESLIB_REPOSITORY "git@github.com:AI-Tech-Research-Lab/FIDESlib.git")
 endif ()
 if (NOT DEFINED FIDESLIB_GIT_TAG)
-    # The bootstrap-precomputation VRAM cache (SetBootstrapCache), and rotation-key snapshots
-    # in pinned host memory so that cache misses reload at PCIe bandwidth.
-    #
-    # Earlier, still in this pin: two memory fixes on top of the multi-GPU work below. The fused
-    # key switch allocated a table of 6*dnum device pointers per call and never freed it: 144 bytes per key switch,
-    # 8.4 KB per bootstrap, linear and unbounded over a long run -- and it bypasses FIDESlib's
-    # slab pool, so only the CUDA allocator's used-byte counter shows it (tests/test_bootstrap_memory.py).
-    # The second is why that one took a while to land: a destroyed context left its keys in the
-    # global param-switch store, and the next clear of that store destroyed a key whose context
-    # was gone. Any process that builds a CryptoContext, drops it and keeps working could hit it.
-    #
-    # Earlier, still in this pin: the two NaN fixes lost in the branch resync, the wait direction
-    # when a limb buffer returns to the GPU pool, support for devices that own no special primes
-    # (#GPUs > K used to abort mid-computation), the memory pool indexed by device rather than by
-    # partition index (a device list that was not 0,1,...,n-1 could be served another device's
-    # memory, and crashed at teardown), --devices for the gtest suite, and NCCL instead of
-    # cudaMemcpyPeerAsync as the default multi-GPU transport, since the peer-copy special-limb
-    # exchange races under contention -- which reaches sparse bootstrap, through the Accumulate
-    # step, as well as AccumulateSum itself. Asking for a peer transport on a multi-GPU context is
-    # now refused outright, since that failure is silent. See docs/multigpu-plan.md.
-    set(FIDESLIB_GIT_TAG "fabb8d2a2e0638a31a7cc4607a5ce4dc0c242933")
+    # FIDESlib 2.2.0 / patched OpenFHE 1.6.1, retaining the fork's four VRAM caches.
+    set(FIDESLIB_GIT_TAG "ceaee982e975e0f227d5e32fd767fc2cc532cf33")
 endif ()
 
 # Library only: skip FIDESlib's own test/benchmark suites (and their gtest/benchmark fetches).
@@ -50,8 +31,7 @@ FetchContent_Declare(
     fideslib
     GIT_REPOSITORY ${FIDESLIB_REPOSITORY}
     GIT_TAG        ${FIDESLIB_GIT_TAG}
-    # No submodule init: upstream history pins an unfetchable openfhe commit (31c9304) that makes
-    # recursive fetches fail; FIDESlib's own deps/build.sh inits the submodule itself (--remote).
+    # FIDESlib installs its patched OpenFHE through deps/build.sh when needed.
     GIT_SUBMODULES ""
 )
 FetchContent_MakeAvailable(fideslib)
@@ -70,14 +50,8 @@ FetchContent_MakeAvailable(pybind11)
 
 pybind11_add_module(_core src/bindings.cpp)
 
-target_include_directories(_core PRIVATE
-    "${fideslib_SOURCE_DIR}/src"
-    "${fideslib_SOURCE_DIR}/deps/openfhe-install/include/openfhe"
-    "${fideslib_SOURCE_DIR}/deps/openfhe-install/include/openfhe/core"
-    "${fideslib_SOURCE_DIR}/deps/openfhe-install/include/openfhe/pke"
-    "${fideslib_SOURCE_DIR}/deps/openfhe-install/include/openfhe/binfhe"
-    "${fideslib_SOURCE_DIR}/deps/openfhe-install/include/openfhe/third-party/include"
-)
+# Internal GPU helpers need src/; public API and OpenFHE includes come from fideslib.
+target_include_directories(_core PRIVATE "${fideslib_SOURCE_DIR}/src")
 target_compile_definitions(_core PRIVATE MULTI_GPU NCCL RCCL)
 
 target_link_libraries(_core PRIVATE fideslib OpenMP::OpenMP_CXX CUDA::cudart)

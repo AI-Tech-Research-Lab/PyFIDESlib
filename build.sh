@@ -7,7 +7,7 @@
 # Usage: ./build.sh [/path/to/python]
 #
 # First run compiles FIDESlib's vendored OpenFHE from scratch (~10-30 min); later runs are fast
-# since it's only rebuilt when missing.
+# since OpenFHE is only rebuilt when missing or incompatible with the pinned FIDESlib.
 set -e
 cd "$(dirname "$0")"
 
@@ -25,8 +25,14 @@ cmake --build build -j"$(nproc)"
 # fideslib_py/_core.pyi then just stays as-is.
 if command -v uv >/dev/null 2>&1; then
   echo "Regenerating stubs (fideslib_py/_core.pyi)..."
-  PYTHONPATH="$PWD" uv tool run --python 3.12 --with numpy --from pybind11-stubgen \
-    pybind11-stubgen fideslib_py._core --numpy-array-use-type-var -o .
+  PYTHONPATH="$PWD" uv tool run --python "$PY" --with numpy --from pybind11-stubgen \
+    pybind11-stubgen fideslib_py._core --numpy-array-use-type-var \
+    --enum-class-locations 'SerType:fideslib_py._core' -o .
+  "$PY" - <<'PY'
+from pathlib import Path
+stub = Path("fideslib_py/_core.pyi")
+stub.write_text("\n".join(line.rstrip() for line in stub.read_text().splitlines()) + "\n")
+PY
 else
   echo "WARNING: uv not found -- skipping stub regeneration; fideslib_py/_core.pyi may be stale."
 fi

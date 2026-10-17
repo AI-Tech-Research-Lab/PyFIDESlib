@@ -2,7 +2,7 @@
 
 FIDESlib (https://github.com/CAPS-UMU/FIDESlib) executes CKKS homomorphic
 operations on NVIDIA GPUs while delegating context/key generation, encoding
-and encrypt/decrypt to an embedded (patched) OpenFHE 1.5.1.
+and encrypt/decrypt to an embedded (patched) OpenFHE 1.6.1.
 
 IMPORTANT: do not import this module together with `openfhe` (openfhe-python)
 in the same process — both embed different OpenFHE versions.
