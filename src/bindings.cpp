@@ -261,6 +261,34 @@ void ConvolutionTransformInPlace(CC& cc, Ct ct, int gStep, int bStep, std::vecto
 	}
 	cc.ConvolutionTransformInPlace(ct, gStep, bStep, pts, indexes, stride, rowSize);
 }
+
+// OpenFHE's SchemeBase::MultByMonomialInPlace: multiply both ciphertext elements by X^power in
+// Z[X]/(X^N + 1), with power taken mod 2N (X^N = -1). FIDESlib's API layer does not wrap it, so
+// dispatch to OpenFHE on CPU and to CKKS::Ciphertext::multMonomial on GPU, as its in-place ops do.
+void MultByMonomialInPlace(CC& cc, Ct ct, uint32_t power) {
+	CheckCiphertextContext(cc, ct);
+	// The GPU kernel handles powers in [0, 2N) only; OpenFHE reduces mod 2N itself.
+	power %= 2 * cc.GetRingDimension();
+	if (cc.devices.empty()) {
+		auto& context = std::any_cast<const lbcrypto::CryptoContext<lbcrypto::DCRTPoly>&>(cc.cpu);
+		ct->EnsureLazyCPUCopy(); // detach a CPU payload shared with a clone before mutating it
+		auto& impl = std::any_cast<lbcrypto::Ciphertext<lbcrypto::DCRTPoly>&>(ct->cpu);
+		context->GetScheme()->MultByMonomialInPlace(impl, power);
+		return;
+	}
+	cc.LoadCiphertext(ct);
+	std::static_pointer_cast<GPUCt>(cc.GetDeviceCiphertext(ct->gpu))->multMonomial(static_cast<int>(power));
+}
+
+Ct MultByMonomial(CC& cc, Ct ct, uint32_t power) {
+	CheckCiphertextContext(cc, ct);
+	// Make the input resident first, as EvalMult(ct, scalar) does, so the clone copies device data.
+	if (!cc.devices.empty())
+		cc.LoadCiphertext(ct);
+	Ct result = ct->Clone();
+	MultByMonomialInPlace(cc, result, power);
+	return result;
+}
 } // namespace
 
 PYBIND11_MODULE(_core, m) {
@@ -786,6 +814,13 @@ PYBIND11_MODULE(_core, m) {
 			CheckCiphertextContext(cc, ct);
 			cc.EvalNegateInPlace(ct);
 		}, py::arg("ciphertext"), "Negate a ciphertext in place, with the same scaling behavior as EvalNegate.", nogil)
+		// Monomial multiplication (OpenFHE SchemeBase::MultByMonomial)
+		.def("MultByMonomial", &MultByMonomial, py::arg("ciphertext"), py::arg("power"),
+			"Multiply a ciphertext by X^power in Z[X]/(X^N + 1), power taken mod 2N. Exact: level, scaling "
+			"factor and noise are unchanged and no key is needed. With N = GetRingDimension(), power N/2 "
+			"multiplies every CKKS slot by i and 3N/2 by -i.", nogil)
+		.def("MultByMonomialInPlace", &MultByMonomialInPlace, py::arg("ciphertext"), py::arg("power"),
+			"In-place MultByMonomial; Python aliases of the ciphertext see the result.", nogil)
 		// Rotations
 		.def("EvalRotate", &CC::EvalRotate, py::arg("ciphertext"), py::arg("index"), nogil)
 		.def("EvalRotateInPlace", &CC::EvalRotateInPlace, py::arg("ciphertext"), py::arg("index"), nogil)

@@ -188,6 +188,15 @@ For complex data, call `params.SetCKKSDataType(fhe.COMPLEX)` **before** `GenCryp
 `pt.GetCKKSPackedValue()`. `MakeCKKSPackedPlaintextF64` remains a real-array fast path.
 Ciphertexts expose `GetSlots()` and `GetScalingFactor()` as well as level and noise degree.
 
+`MultByMonomial(ct, power)` and `MultByMonomialInPlace(ct, power)` mirror OpenFHE's
+`SchemeBase::MultByMonomial`: they multiply by `X^power` modulo `X^N + 1`, with `power`
+taken mod `2N`. With `N = cc.GetRingDimension()`, `N // 2` multiplies every slot by `i`
+and `3 * N // 2` by `-i`. This is exact: no level, scale or noise cost and no keys,
+unlike `EvalMult` with a plaintext of `i`, which costs a level. On GPU, a monomial is
+cached per power and rebuilt when the ciphertext level changes, so prefer calling it at a
+consistent level. `python tests/test_mult_by_monomial.py` checks the slot factors and
+CPU/GPU bit-exactness.
+
 `EvalAddMutable`, `EvalSubMutable` and `EvalMultMutable` accept ciphertext/ciphertext,
 ciphertext/plaintext and plaintext/ciphertext pairs. They return a result and may modify
 operand scales/levels, visible through existing Python aliases. Their `*MutableInPlace`

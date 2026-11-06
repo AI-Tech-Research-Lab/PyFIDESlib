@@ -605,6 +605,14 @@ class CryptoContext:
         ...
     def MakeCKKSPackedPlaintextF64(self, value: numpy.ndarray[typing.Any, numpy.dtype[numpy.float64]], noiseScaleDeg: int = 1, level: int = 0, slots: int = 0) -> Plaintext:
         ...
+    def MultByMonomial(self, ciphertext: Ciphertext, power: int) -> Ciphertext:
+        """
+        Multiply a ciphertext by X^power in Z[X]/(X^N + 1), power taken mod 2N. Exact: level, scaling factor and noise are unchanged and no key is needed. With N = GetRingDimension(), power N/2 multiplies every CKKS slot by i and 3N/2 by -i.
+        """
+    def MultByMonomialInPlace(self, ciphertext: Ciphertext, power: int) -> None:
+        """
+        In-place MultByMonomial; Python aliases of the ciphertext see the result.
+        """
     def OffloadBootstrapPrecomputation(self) -> None:
         ...
     def OffloadCiphertexts(self) -> None:
