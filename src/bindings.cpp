@@ -424,7 +424,7 @@ PYBIND11_MODULE(_core, m) {
 			 "Overwrite this ciphertext with the weighted sum of the first n inputs (GPU only). "
 			 "Inputs need noise scale degree 1 and the same context/key. No rescale is performed; "
 			 "the result has noise scale degree 2. The destination may also be an input.", nogil)
-		.def("GetLevel", &CtI::GetLevel)
+		.def("GetLevel", [](const CtI& ct) { return static_cast<int64_t>(static_cast<int32_t>(ct.GetLevel())); })
 		.def("GetNoiseScaleDeg", &CtI::GetNoiseScaleDeg)
 		.def("GetScalingFactor", &CtI::GetScalingFactor)
 		.def("GetSlots", &CtI::GetSlots)
@@ -849,9 +849,10 @@ PYBIND11_MODULE(_core, m) {
 		// Rescale
 		.def("Rescale", &CC::Rescale, nogil)
 		.def("RescaleInPlace", &CC::RescaleInPlace, nogil)
-		.def("SetLevel", [](CC& cc, Ct ct, size_t level) {
+		.def("SetLevel", [](CC& cc, Ct ct, int64_t level) {
 			CheckCiphertextContext(cc, ct);
-			if (level < ct->GetLevel() || level > cc.multiplicative_depth)
+			const int64_t current = static_cast<int64_t>(static_cast<int32_t>(ct->GetLevel()));
+			if (level < current || level > static_cast<int64_t>(cc.multiplicative_depth))
 				throw py::value_error("SetLevel: level must be between the ciphertext's current level and the context's multiplicative depth");
 			cc.SetLevel(ct, level);
 		}, py::arg("ciphertext"), py::arg("level"),
