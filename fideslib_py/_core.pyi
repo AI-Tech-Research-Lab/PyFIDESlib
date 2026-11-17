@@ -4,7 +4,7 @@ Python bindings for FIDESlib (CKKS on GPU, interoperable with OpenFHE)
 from __future__ import annotations
 import numpy
 import typing
-__all__: list[str] = ['ADVANCEDSHE', 'BINARY', 'CCParams', 'CKKSDataType', 'COMPLEX', 'Ciphertext', 'CryptoContext', 'FHE', 'FIXEDAUTO', 'FIXEDMANUAL', 'FLEXIBLEAUTO', 'FLEXIBLEAUTOEXT', 'GAUSSIAN', 'GenCryptoContext', 'GetChebyshevCoefficients', 'GetGPUMemoryPoolStats', 'HEStd_128_classic', 'HEStd_128_quantum', 'HEStd_192_classic', 'HEStd_192_quantum', 'HEStd_256_classic', 'HEStd_256_quantum', 'HEStd_NotSet', 'HYBRID', 'JSON', 'KEYSWITCH', 'KeyPair', 'KeySwitchTechnique', 'LEVELEDSHE', 'MULTIPARTY', 'PKE', 'PKESchemeFeature', 'PRE', 'Plaintext', 'PrivateKey', 'PublicKey', 'REAL', 'SCHEMESWITCH', 'SPARSE_ENCAPSULATED', 'SPARSE_TERNARY', 'ScalingTechnique', 'SecretKeyDist', 'SecurityLevel', 'SerType', 'SerializeToFile', 'UNIFORM_TERNARY', 'accumulate_rotation_indices', 'convolution_rotation_indices']
+__all__: list[str] = ['ADVANCEDSHE', 'BINARY', 'CCParams', 'CKKSDataType', 'COMPLEX', 'Ciphertext', 'CryptoContext', 'FHE', 'FIXEDAUTO', 'FIXEDMANUAL', 'FLEXIBLEAUTO', 'FLEXIBLEAUTOEXT', 'GAUSSIAN', 'GenCryptoContext', 'GetChebyshevCoefficients', 'GetGPUMemoryPoolStats', 'HEStd_128_classic', 'HEStd_128_quantum', 'HEStd_192_classic', 'HEStd_192_quantum', 'HEStd_256_classic', 'HEStd_256_quantum', 'HEStd_NotSet', 'HYBRID', 'JSON', 'KEYSWITCH', 'KeyPair', 'KeySwitchTechnique', 'LEVELEDSHE', 'MULTIPARTY', 'PKE', 'PKESchemeFeature', 'PRE', 'Plaintext', 'PrivateKey', 'PublicKey', 'REAL', 'SCHEMESWITCH', 'SPARSE_ENCAPSULATED', 'SPARSE_TERNARY', 'ScalingTechnique', 'SecretKeyDist', 'SecurityLevel', 'SerType', 'SerializeToFile', 'SeriesPowers', 'UNIFORM_TERNARY', 'accumulate_rotation_indices', 'convolution_rotation_indices']
 class PKESchemeFeature:
     """
     Members:
@@ -317,6 +317,10 @@ class KeyPair:
     @property
     def secretKey(self) -> PrivateKey:
         ...
+class SeriesPowers:
+    """
+    Shared powers from EvalFEFuncBootstrapPrecompute, for EvalFEFuncBootstrapWithPrecomp. GPU powers remain in VRAM until this handle is released and are outside the ciphertext cache budget.
+    """
 class Plaintext:
     def GetCKKSPackedValue(self) -> list[complex]:
         ...
@@ -403,6 +407,11 @@ class CCParams:
     def __init__(self) -> None:
         ...
 class CryptoContext:
+    @staticmethod
+    def GetFEFBTDepth(levelBudget: list[int], coefficients: list[complex], skd: SecretKeyDist = SecretKeyDist.SPARSE_TERNARY, firstModSize: int = 60) -> int:
+        """
+        Multiplicative depth consumed by FE functional bootstrapping; add levels for subsequent computation.
+        """
     def AccumulateSum(self, ciphertext: Ciphertext, slots: int, stride: int = 1) -> Ciphertext:
         ...
     def AccumulateSumInPlace(self, ciphertext: Ciphertext, slots: int, stride: int = 1) -> None:
@@ -477,6 +486,22 @@ class CryptoContext:
         ...
     def EvalChebyshevSeriesInPlace(self, ciphertext: Ciphertext, coefficients: list[float], a: float, b: float) -> None:
         ...
+    def EvalFEFuncBootstrap(self, ciphertext: Ciphertext, coefficients: list[complex]) -> Ciphertext:
+        """
+        Refresh and evaluate Fourier-extension coefficients (c_0 first) on slots in [-1/2, 1/2). Preserves the input and returns real function values on CPU or GPU.
+        """
+    def EvalFEFuncBootstrapPrecompute(self, ciphertext: Ciphertext, coefficients: list[complex]) -> SeriesPowers:
+        """
+        Run the shared refresh and exponential once. Pass the longest series, of degree at least 5. Returns SeriesPowers for this context and backend; preserves the input.
+        """
+    def EvalFEFuncBootstrapSetup(self, levelBudget: list[int] = [5, 4], dim1: list[int] = [0, 0], slots: int = 0) -> None:
+        """
+        Precompute FE functional bootstrapping before LoadContext. Requires HYBRID and FirstModSize == ScalingModSize + 1; reserves the bootstrap mode for this slot count.
+        """
+    def EvalFEFuncBootstrapWithPrecomp(self, powers: SeriesPowers, coefficients: list[complex]) -> Ciphertext:
+        """
+        Evaluate a Fourier series using shared SeriesPowers from this context and backend. The powers can be reused for several functions and are preserved.
+        """
     def EvalFastRotation(self, ciphertext: Ciphertext, indices: list[int]) -> list[Ciphertext]:
         """
         Return GPU hoisted rotations in the order of indices. No precomputation handle is needed. Zero indices return independent copies; the input is preserved.

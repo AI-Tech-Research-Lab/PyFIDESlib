@@ -377,6 +377,11 @@ PYBIND11_MODULE(_core, m) {
 		.def_readonly("publicKey", &KP::publicKey)
 		.def_readonly("secretKey", &KP::secretKey);
 
+	// Opaque, shared holder: the native handle keeps its context and GPU powers alive.
+	py::class_<SeriesPowersImpl, SeriesPowers>(m, "SeriesPowers",
+		"Shared powers from EvalFEFuncBootstrapPrecompute, for EvalFEFuncBootstrapWithPrecomp. "
+		"GPU powers remain in VRAM until this handle is released and are outside the ciphertext cache budget.");
+
 	// ---- Plaintext ----
 
 	py::class_<PlaintextImpl, Pt>(m, "Plaintext")
@@ -865,6 +870,31 @@ PYBIND11_MODULE(_core, m) {
 			[](CC& cc, Ct& ct, int slots, int stride) { cc.AccumulateSumInPlace(ct, slots, stride); },
 			py::arg("ciphertext"), py::arg("slots"), py::arg("stride") = 1, nogil)
 		// Bootstrapping
+		.def_static("GetFEFBTDepth", &FHECKKSRNS::GetFEFBTDepth,
+			py::arg("levelBudget"), py::arg("coefficients"), py::arg("skd") = SPARSE_TERNARY,
+			py::arg("firstModSize") = 60,
+			"Multiplicative depth consumed by FE functional bootstrapping; add levels for subsequent computation.", nogil)
+		.def("EvalFEFuncBootstrapSetup", &CC::EvalFEFuncBootstrapSetup,
+			py::arg("levelBudget") = std::vector<uint32_t>{ 5, 4 },
+			py::arg("dim1") = std::vector<uint32_t>{ 0, 0 }, py::arg("slots") = 0,
+			"Precompute FE functional bootstrapping before LoadContext. Requires HYBRID and "
+			"FirstModSize == ScalingModSize + 1; reserves the bootstrap mode for this slot count.", nogil)
+		.def("EvalFEFuncBootstrap", [](CC& cc, const Ct& ct, const std::vector<std::complex<double>>& coefficients) {
+			CheckCiphertextContext(cc, ct);
+			return cc.EvalFEFuncBootstrap(ct, coefficients);
+		}, py::arg("ciphertext"), py::arg("coefficients"),
+			"Refresh and evaluate Fourier-extension coefficients (c_0 first) on slots in [-1/2, 1/2). "
+			"Preserves the input and returns real function values on CPU or GPU.", nogil)
+		.def("EvalFEFuncBootstrapPrecompute", [](CC& cc, const Ct& ct, const std::vector<std::complex<double>>& coefficients) {
+			CheckCiphertextContext(cc, ct);
+			return cc.EvalFEFuncBootstrapPrecompute(ct, coefficients);
+		}, py::arg("ciphertext"), py::arg("coefficients"),
+			"Run the shared refresh and exponential once. Pass the longest series, of degree at least 5. "
+			"Returns SeriesPowers for this context and backend; preserves the input.", nogil)
+		.def("EvalFEFuncBootstrapWithPrecomp", &CC::EvalFEFuncBootstrapWithPrecomp,
+			py::arg("powers"), py::arg("coefficients"),
+			"Evaluate a Fourier series using shared SeriesPowers from this context and backend. "
+			"The powers can be reused for several functions and are preserved.", nogil)
 		.def("EvalBootstrapSetup", &CC::EvalBootstrapSetup, py::arg("levelBudget") = std::vector<uint32_t>{ 5, 4 },
 			 py::arg("dim1") = std::vector<uint32_t>{ 0, 0 }, py::arg("slots") = 0, py::arg("correctionFactor") = 0,
 			 py::arg("precompute") = true, py::arg("btsfirstboot") = false, nogil)

@@ -27,7 +27,8 @@ if command -v uv >/dev/null 2>&1; then
   echo "Regenerating stubs (fideslib_py/_core.pyi)..."
   PYTHONPATH="$PWD" uv tool run --python "$PY" --with numpy --from pybind11-stubgen \
     pybind11-stubgen fideslib_py._core --numpy-array-use-type-var \
-    --enum-class-locations 'SerType:fideslib_py._core' -o .
+    --enum-class-locations 'SerType:fideslib_py._core' \
+    --enum-class-locations 'SecretKeyDist:fideslib_py._core' -o .
   "$PY" - <<'PY'
 from pathlib import Path
 stub = Path("fideslib_py/_core.pyi")

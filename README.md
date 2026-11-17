@@ -3,7 +3,8 @@
 Python bindings (pybind11) for [FIDESlib](https://github.com/CAPS-UMU/FIDESlib), a GPU
 implementation of CKKS that interoperates with OpenFHE. The API follows openfhe-python and
 covers context setup, key generation, encoding, encryption, leveled arithmetic, rotations,
-`EvalChebyshevSeries`, `AccumulateSum` and bootstrapping, on one or more GPUs.
+`EvalChebyshevSeries`, `AccumulateSum`, bootstrapping and Fourier-extension functional
+bootstrapping, on one or more GPUs.
 
 ## Installation
 
@@ -60,7 +61,7 @@ print(pt.GetRealPackedValue())            # [4, 9, 16, ...]
 ```
 
 Everything that creates keys has to run before `LoadContext()`, which uploads them to the GPU.
-That includes `EvalMultKeyGen`, `EvalRotateKeyGen`, `EvalBootstrapSetup` and
+That includes `EvalMultKeyGen`, `EvalRotateKeyGen`, `EvalBootstrapSetup`, `EvalFEFuncBootstrapSetup` and
 `EvalBootstrapKeyGen`, and they all raise if called after it.
 
 Things that differ from openfhe-python:
@@ -156,6 +157,64 @@ the scaling factor and noise scale degree, accepts levels from `ct.GetLevel()` t
 the context's multiplicative depth, and does not perform a rescale. Use
 `python tests/test_arithmetic_helpers.py` to check these bindings, including CPU behavior;
 the same `WSUM_SCALING` and `WSUM_DEVICES` settings apply.
+
+## Functional bootstrapping
+
+Fourier-extension functional bootstrapping (FE-FBT) refreshes a ciphertext and evaluates
+a real function in the same pass, on CPU or GPU. Names, keyword arguments and defaults
+follow the [official openfhe-python bindings](https://github.com/openfheorg/openfhe-python/blob/main/src/lib/pke/fbt.cpp).
+
+```python
+budget = [3, 2]
+# Exact series for cos(pi*m) + 0.25*cos(5*pi*m), m in [-0.5, 0.5).
+coefficients = [0, 0.5, 0, 0, 0, 0.125]
+depth = fhe.CryptoContext.GetFEFBTDepth(budget, coefficients, fhe.SPARSE_ENCAPSULATED) + 6
+# Create cc with this depth, ScalingModSize=59, FirstModSize=60, HYBRID,
+# SPARSE_ENCAPSULATED, and enable PKE, KEYSWITCH, LEVELEDSHE, ADVANCEDSHE, FHE.
+cc.EvalFEFuncBootstrapSetup(levelBudget=budget, dim1=[0, 0], slots=slots)
+keys = cc.KeyGen()
+cc.EvalMultKeyGen(keys.secretKey)
+cc.EvalBootstrapKeyGen(keys.secretKey, slots)
+cc.LoadContext(keys.publicKey)  # omit for CPU, with SetDevices([])
+
+pt = cc.MakeCKKSPackedPlaintext(x, level=depth - (budget[1] + 1), slots=slots)
+ct = cc.Encrypt(keys.publicKey, pt)
+result = cc.EvalFEFuncBootstrap(ciphertext=ct, coefficients=coefficients)
+
+# Share the refresh across functions; the longest series must have degree >= 5.
+powers = cc.EvalFEFuncBootstrapPrecompute(ciphertext=ct, coefficients=coefficients)
+same = cc.EvalFEFuncBootstrapWithPrecomp(powers=powers, coefficients=coefficients)
+sine = cc.EvalFEFuncBootstrapWithPrecomp(powers=powers, coefficients=[0, -0.5j])
+```
+
+`coefficients` accepts real or complex sequences, with `c_0` first. These are Fourier
+extension coefficients: the output is `2*Re(sum(c_j*exp(pi*i*j*m)))`. For a function
+on `[-B, B]`, encode `m = x/(2*B)` in `[-0.5, 0.5)` and generate its coefficients with
+[fefbt-python](https://github.com/openfheorg/fefbt-python). The input ciphertext is
+preserved; output slots are real, including with `COMPLEX` input (imaginary parts are
+discarded). Inputs outside this interval do not raise an error and give incorrect results.
+
+Setup requires `FirstModSize == ScalingModSize + 1`, two entries in each budget/dimension
+vector, and `slots=0` (full packing) or a power of two up to `N/2`. Run it before
+`LoadContext()`. FE-FBT and ordinary bootstrapping reserve different precomputations
+and cannot share a slot count. The input needs enough levels for SlotsToCoeffs; the
+example above encodes at its depletion level. `GetFEFBTDepth` defaults to
+`skd=SPARSE_TERNARY, firstModSize=60` as upstream does; pass the context's actual
+distribution, preferably `SPARSE_ENCAPSULATED`, and add a margin for later operations.
+
+`SeriesPowers` is an opaque reusable handle tied to its context and CPU/GPU backend.
+Recompute it after switching to GPU. It keeps its native context alive; release the
+handle to free the powers. GPU powers remain in VRAM outside `SetCiphertextCache`;
+bootstrap matrices and keys respect `SetBootstrapCache` and `SetRotationKeyCache`.
+All five calls release the GIL. This fork implements FE-FBT; LUT-based `EvalFBT`,
+composite scaling and iterative FE-FBT are not supported.
+
+Run `python examples/05_functional_bootstrap.py` (or add `--cpu`) for a complete example.
+`OMP_NUM_THREADS=8 python tests/test_functional_bootstrap.py` checks exact CPU/GPU
+ciphertext parity, decryption, shared powers, cache reloads and invalid arguments.
+The example and tests use small, non-secure parameters. In production select a security
+level and let OpenFHE size the ring; sharing decrypted CKKS outputs also requires an
+appropriate noise flooding policy, which this wrapper does not apply automatically.
 
 ## FIDESlib 2.2.0 operations
 
