@@ -486,6 +486,10 @@ class CryptoContext:
         ...
     def EvalChebyshevSeriesInPlace(self, ciphertext: Ciphertext, coefficients: list[float], a: float, b: float) -> None:
         ...
+    def EvalConjugate(self, ciphertext: Ciphertext) -> Ciphertext:
+        """
+        Return the complex conjugate of every slot (a + ib -> a - ib) as an independent ciphertext; the input is preserved. Level, noise scale degree and scaling factor are unchanged. GPU only: needs a loaded context and the conjugation key, which EvalBootstrapSetup and EvalBootstrapKeyGen before LoadContext provide.
+        """
     def EvalFEFuncBootstrap(self, ciphertext: Ciphertext, coefficients: list[complex]) -> Ciphertext:
         """
         Refresh and evaluate Fourier-extension coefficients (c_0 first) on slots in [-1/2, 1/2). Preserves the input and returns real function values on CPU or GPU.

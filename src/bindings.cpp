@@ -21,6 +21,7 @@
 #include "CudaUtils.cuh"
 #include "CKKS/Context.cuh"
 #include "CKKS/Ciphertext.cuh"
+#include "CKKS/KeySwitchingKey.cuh"
 #include "CKKS/Plaintext.cuh"
 #include <cuda_runtime_api.h>
 
@@ -287,6 +288,31 @@ Ct MultByMonomial(CC& cc, Ct ct, uint32_t power) {
 		cc.LoadCiphertext(ct);
 	Ct result = ct->Clone();
 	MultByMonomialInPlace(cc, result, power);
+	return result;
+}
+
+// Complex conjugation on the GPU: automorphism X -> X^(2N-1) followed by key switching with the
+// conjugation key, which LoadContext uploads for every bootstrapping setup. FIDESlib's API layer
+// does not wrap CKKS::Ciphertext::conjugate, whose key lookup skips the presence check for this
+// index, so the key is checked here first.
+Ct EvalConjugate(CC& cc, Ct ct) {
+	CheckCiphertext(cc, ct);
+	if (!cc.loaded)
+		throw std::runtime_error("EvalConjugate: the GPU context is not loaded; call LoadContext first");
+	cc.LoadCiphertext(ct);
+	auto& gpu = std::any_cast<FIDESlib::CKKS::Context&>(cc.gpu);
+	const int index = 2 * gpu->N - 1;
+	const auto keyID = std::static_pointer_cast<GPUCt>(cc.GetDeviceCiphertext(ct->gpu))->keyID;
+	auto keys = gpu->precom.keys.find(keyID);
+	if (keys == gpu->precom.keys.end() || !keys->second.rot_keys.contains(index))
+		throw py::value_error("EvalConjugate: missing conjugation key; call EvalBootstrapSetup and "
+							  "EvalBootstrapKeyGen before LoadContext");
+	// The clone is an independent destination with the input's metadata; conjugate overwrites its
+	// payload. GetDeviceCiphertext reloads without evicting, so both handles stay valid.
+	Ct result = ct->Clone();
+	auto output = std::static_pointer_cast<GPUCt>(cc.GetDeviceCiphertext(result->gpu));
+	auto input = std::static_pointer_cast<GPUCt>(cc.GetDeviceCiphertext(ct->gpu));
+	output->conjugate(*input);
 	return result;
 }
 } // namespace
@@ -826,6 +852,12 @@ PYBIND11_MODULE(_core, m) {
 			"multiplies every CKKS slot by i and 3N/2 by -i.", nogil)
 		.def("MultByMonomialInPlace", &MultByMonomialInPlace, py::arg("ciphertext"), py::arg("power"),
 			"In-place MultByMonomial; Python aliases of the ciphertext see the result.", nogil)
+		// Complex conjugation (GPU CKKS::Ciphertext::conjugate)
+		.def("EvalConjugate", &EvalConjugate, py::arg("ciphertext"),
+			"Return the complex conjugate of every slot (a + ib -> a - ib) as an independent ciphertext; "
+			"the input is preserved. Level, noise scale degree and scaling factor are unchanged. GPU only: "
+			"needs a loaded context and the conjugation key, which EvalBootstrapSetup and "
+			"EvalBootstrapKeyGen before LoadContext provide.", nogil)
 		// Rotations
 		.def("EvalRotate", &CC::EvalRotate, py::arg("ciphertext"), py::arg("index"), nogil)
 		.def("EvalRotateInPlace", &CC::EvalRotateInPlace, py::arg("ciphertext"), py::arg("index"), nogil)

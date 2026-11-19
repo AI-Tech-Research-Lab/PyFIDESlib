@@ -256,6 +256,17 @@ cached per power and rebuilt when the ciphertext level changes, so prefer callin
 consistent level. `python tests/test_mult_by_monomial.py` checks the slot factors and
 CPU/GPU bit-exactness.
 
+`EvalConjugate(ct)` maps every slot from `a + ib` to `a - ib` on the GPU
+(`CKKS::Ciphertext::conjugate`: the automorphism `2N - 1` followed by a key switch). It
+returns an independent ciphertext with the input's level, noise scale degree and scaling
+factor, and leaves the input untouched. It needs a loaded GPU context and the conjugation
+key, which `EvalBootstrapSetup` and `EvalBootstrapKeyGen` before `LoadContext` provide;
+otherwise it raises (`RuntimeError` for a CPU or unloaded context, `ValueError` for a
+missing key). With two real vectors packed as `z = a + ib`, `(z + conj(z)) / 2` gives `a`
+and `(z - conj(z)) / (2i)` gives `b`, where the division by `i` is
+`MultByMonomial(·, 3 * N // 2)`. `python tests/test_eval_conjugate.py` checks the values,
+metadata, aliasing and error cases.
+
 `EvalAddMutable`, `EvalSubMutable` and `EvalMultMutable` accept ciphertext/ciphertext,
 ciphertext/plaintext and plaintext/ciphertext pairs. They return a result and may modify
 operand scales/levels, visible through existing Python aliases. Their `*MutableInPlace`
