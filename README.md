@@ -66,9 +66,16 @@ That includes `EvalMultKeyGen`, `EvalRotateKeyGen`, `EvalBootstrapSetup`, `EvalF
 
 Things that differ from openfhe-python:
 - **Do not `import openfhe` in the same process.** The two embed different OpenFHE versions.
-- **`EvalSum` is not available.** Use `cc.AccumulateSum(ct, n, stride=1)` instead, with keys
-  from `fhe.accumulate_rotation_indices(n, stride)`. Every index you rotate by needs its own
-  rotation key.
+- **`EvalSum`, `EvalSumRows` and `EvalSumCols` take no key map.** Generate their keys with
+  `EvalSumKeyGen`, `EvalSumRowsKeyGen(sk, rowSize)` and `EvalSumColsKeyGen` before
+  `LoadContext()`; the keygens return nothing and the keys stay in the context. The GPU results
+  are bit-identical to OpenFHE 1.6.1, quirks included: `EvalSumRows`' second argument is the row
+  size (OpenFHE calls it `numRows`) and the sum covers the whole ring, so with sparse packing each
+  column sum comes out multiplied by `(N/2)/slots`. The sizes passed to `EvalSum` and `EvalSumCols`
+  must be powers of two: as in OpenFHE, the fold otherwise sums the next power of two terms.
+  `EvalSumCols` consumes a level (mask multiplication). `subringDim` must be 0 or the cyclotomic order. For a sum over an arbitrary
+  stride, `cc.AccumulateSum(ct, n, stride)` with keys from `fhe.accumulate_rotation_indices(n, stride)`
+  remains available.
 - **Running out of GPU memory kills the process.** No exception is raised.
 - **Bootstrapping requires sufficient depth, compatible scaling parameters and matching
   precomputation.** Start from `examples/04_bootstrap.py`; StC-first needs more levels

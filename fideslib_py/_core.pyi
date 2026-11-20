@@ -590,6 +590,30 @@ class CryptoContext:
         ...
     def EvalSubMutableInPlace(self, a: Ciphertext, b: Ciphertext) -> None:
         ...
+    def EvalSum(self, ciphertext: Ciphertext, batchSize: int) -> Ciphertext:
+        """
+        OpenFHE's EvalSum: slot i receives sum_{k < batchSize} x[i + k] (cyclic). batchSize must be a power of two: as in OpenFHE, the radix-4 fold otherwise sums the next power of two terms. Needs EvalSumKeyGen or EvalSumColsKeyGen; consumes no level.
+        """
+    def EvalSumCols(self, ciphertext: Ciphertext, numCols: int) -> Ciphertext:
+        """
+        OpenFHE's EvalSumCols: every slot of each block of numCols slots receives that block's sum (numCols a power of two, as in OpenFHE). Needs EvalSumColsKeyGen; no key map argument; consumes one level (mask multiplication).
+        """
+    def EvalSumColsKeyGen(self, privateKey: PrivateKey) -> None:
+        """
+        Generate the rotation keys of EvalSumCols: the EvalSum keys plus the right-rotation keys over the context's batch size (OpenFHE's EvalSumColsKeyGen).
+        """
+    def EvalSumKeyGen(self, privateKey: PrivateKey) -> None:
+        """
+        Generate the rotation keys of EvalSum over the context's batch size (OpenFHE's EvalSumKeyGen).
+        """
+    def EvalSumRows(self, ciphertext: Ciphertext, rowSize: int, subringDim: int = 0) -> Ciphertext:
+        """
+        OpenFHE's EvalSumRows on a row-major matrix with rowSize columns: slot i receives sum_{k < (N/2)/rowSize} x[i + k*rowSize], the column sums over the whole ring (N/2 slots, so sparse packing repeats each row). OpenFHE calls this argument numRows. Needs EvalSumRowsKeyGen with the same rowSize; no key map argument; consumes no level.
+        """
+    def EvalSumRowsKeyGen(self, privateKey: PrivateKey, rowSize: int, subringDim: int = 0) -> None:
+        """
+        Generate the rotation keys of EvalSumRows(ct, rowSize) (OpenFHE's EvalSumRowsKeyGen). Returns nothing: the keys stay in the context. subringDim must be 0 or the cyclotomic order.
+        """
     def GetAuxiliaryPolyPoolSize(self) -> int:
         ...
     def GetBootstrapCache(self) -> int | None:

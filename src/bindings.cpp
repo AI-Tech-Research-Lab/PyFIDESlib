@@ -163,6 +163,60 @@ void CheckRotationKeys(const CC& cc, const GPUCt& ct, const std::vector<int>& in
 	}
 }
 
+// OpenFHE's EvalSum family runs as a radix-4 rotation fold whose level s rotates by i*s*stride,
+// i in [1, 4), i*s < size (FIDESlib's EvalSumFoldSteps). On the GPU the keys are looked up inside
+// the fold, so check them first; the CPU fallback raises OpenFHE's own error. The fold applies the
+// raw automorphism 5^step (no slot normalisation), so each step needs its own key mod N/2.
+std::vector<int> EvalSumFoldSteps(int stride, uint32_t size) {
+	std::vector<int> steps;
+	for (uint32_t s = 1; s < size; s *= 4)
+		for (uint32_t i = 1; i < 4 && i * s < size; ++i)
+			steps.push_back(static_cast<int>(i * s) * stride);
+	return steps;
+}
+
+void CheckEvalSumKeys(CC& cc, const Ct& ct, const std::vector<int>& steps, const char* keyGen) {
+	CheckCiphertextContext(cc, ct);
+	if (cc.devices.empty() || !cc.loaded)
+		return;
+	const int half = static_cast<int>(cc.GetRingDimension() / 2);
+	auto reduce = [half](int index) { index %= half; return index < 0 ? index + half : index; };
+	for (int step : steps) {
+		bool found = false;
+		for (int keyIndex : cc.rotation_indexes)
+			found |= reduce(keyIndex) == reduce(step);
+		if (!found)
+			throw py::value_error("missing rotation key for index " + std::to_string(step) + "; call " + keyGen +
+								  " before LoadContext");
+	}
+}
+
+Ct EvalSum(CC& cc, const Ct& ct, uint32_t batchSize) {
+	CheckEvalSumKeys(cc, ct, EvalSumFoldSteps(1, batchSize), "EvalSumKeyGen or EvalSumColsKeyGen");
+	return cc.EvalSum(ct, batchSize);
+}
+
+Ct EvalSumRows(CC& cc, const Ct& ct, uint32_t rowSize, uint32_t subringDim) {
+	CheckCiphertextContext(cc, ct);
+	// Out-of-range arguments are left to FIDESlib, which rejects them.
+	if (rowSize != 0 && rowSize <= cc.GetCyclotomicOrder() / 4)
+		CheckEvalSumKeys(cc, ct, EvalSumFoldSteps(static_cast<int>(rowSize), cc.GetCyclotomicOrder() / (4 * rowSize)),
+						 "EvalSumRowsKeyGen with the same rowSize");
+	return cc.EvalSumRows(ct, rowSize, subringDim);
+}
+
+Ct EvalSumCols(CC& cc, const Ct& ct, uint32_t numCols) {
+	CheckCiphertextContext(cc, ct);
+	// Out-of-range arguments are left to FIDESlib, which rejects them.
+	if (numCols != 0 && numCols <= ct->GetSlots()) {
+		std::vector<int> steps = EvalSumFoldSteps(1, numCols);
+		for (int step : EvalSumFoldSteps(-1, numCols))
+			steps.push_back(step);
+		CheckEvalSumKeys(cc, ct, steps, "EvalSumColsKeyGen");
+	}
+	return cc.EvalSumCols(ct, numCols);
+}
+
 std::vector<Ct> EvalFastRotations(CC& cc, Ct ct, const std::vector<int32_t>& indices) {
 	CheckCiphertext(cc, ct);
 	if (indices.empty())
@@ -506,6 +560,15 @@ PYBIND11_MODULE(_core, m) {
 		.def("KeyGen", &CC::KeyGen, nogil)
 		.def("EvalMultKeyGen", &CC::EvalMultKeyGen, py::arg("privateKey"), nogil)
 		.def("EvalRotateKeyGen", &CC::EvalRotateKeyGen, py::arg("privateKey"), py::arg("indexList"), nogil)
+		.def("EvalSumKeyGen", &CC::EvalSumKeyGen, py::arg("privateKey"),
+			"Generate the rotation keys of EvalSum over the context's batch size (OpenFHE's EvalSumKeyGen).", nogil)
+		.def("EvalSumRowsKeyGen", &CC::EvalSumRowsKeyGen, py::arg("privateKey"), py::arg("rowSize"),
+			py::arg("subringDim") = 0,
+			"Generate the rotation keys of EvalSumRows(ct, rowSize) (OpenFHE's EvalSumRowsKeyGen). Returns "
+			"nothing: the keys stay in the context. subringDim must be 0 or the cyclotomic order.", nogil)
+		.def("EvalSumColsKeyGen", &CC::EvalSumColsKeyGen, py::arg("privateKey"),
+			"Generate the rotation keys of EvalSumCols: the EvalSum keys plus the right-rotation keys over the "
+			"context's batch size (OpenFHE's EvalSumColsKeyGen).", nogil)
 		// GPU loading
 		.def("LoadContext", &CC::LoadContext, py::arg("publicKey"), nogil)
 		.def("LoadPlaintext", &CC::LoadPlaintext, py::arg("plaintext"), nogil)
@@ -901,6 +964,20 @@ PYBIND11_MODULE(_core, m) {
 			"AccumulateSumInPlace",
 			[](CC& cc, Ct& ct, int slots, int stride) { cc.AccumulateSumInPlace(ct, slots, stride); },
 			py::arg("ciphertext"), py::arg("slots"), py::arg("stride") = 1, nogil)
+		// OpenFHE's EvalSum family (bit-identical to OpenFHE 1.6.1); keys from EvalSum*KeyGen.
+		.def("EvalSum", &EvalSum, py::arg("ciphertext"), py::arg("batchSize"),
+			"OpenFHE's EvalSum: slot i receives sum_{k < batchSize} x[i + k] (cyclic). batchSize must be a power "
+			"of two: as in OpenFHE, the radix-4 fold otherwise sums the next power of two terms. Needs "
+			"EvalSumKeyGen or EvalSumColsKeyGen; consumes no level.", nogil)
+		.def("EvalSumRows", &EvalSumRows, py::arg("ciphertext"), py::arg("rowSize"), py::arg("subringDim") = 0,
+			"OpenFHE's EvalSumRows on a row-major matrix with rowSize columns: slot i receives "
+			"sum_{k < (N/2)/rowSize} x[i + k*rowSize], the column sums over the whole ring (N/2 slots, so "
+			"sparse packing repeats each row). OpenFHE calls this argument numRows. Needs EvalSumRowsKeyGen "
+			"with the same rowSize; no key map argument; consumes no level.", nogil)
+		.def("EvalSumCols", &EvalSumCols, py::arg("ciphertext"), py::arg("numCols"),
+			"OpenFHE's EvalSumCols: every slot of each block of numCols slots receives that block's sum "
+			"(numCols a power of two, as in OpenFHE). "
+			"Needs EvalSumColsKeyGen; no key map argument; consumes one level (mask multiplication).", nogil)
 		// Bootstrapping
 		.def_static("GetFEFBTDepth", &FHECKKSRNS::GetFEFBTDepth,
 			py::arg("levelBudget"), py::arg("coefficients"), py::arg("skd") = SPARSE_TERNARY,

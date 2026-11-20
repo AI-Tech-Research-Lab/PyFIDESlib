@@ -19,8 +19,9 @@ if (NOT DEFINED FIDESLIB_REPOSITORY)
     set(FIDESLIB_REPOSITORY "git@github.com:AI-Tech-Research-Lab/FIDESlib.git")
 endif ()
 if (NOT DEFINED FIDESLIB_GIT_TAG)
-    # FIDESlib 2.2.0 / patched OpenFHE 1.6.1, with FE functional bootstrapping and VRAM caches.
-    set(FIDESLIB_GIT_TAG "2a8795c7f8feaa5169b2a89c8ee28b5a2a93eb57")
+    # FIDESlib 2.2.0 / patched OpenFHE 1.6.1, with FE functional bootstrapping, VRAM caches and the
+    # OpenFHE EvalSum family.
+    set(FIDESLIB_GIT_TAG "81acb45dd548a231c8dac85d6fe3cc836087dc7f")
 endif ()
 
 # Library only: skip FIDESlib's own test/benchmark suites (and their gtest/benchmark fetches).
