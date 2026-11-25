@@ -180,10 +180,11 @@ class FunctionalBootstrapTest(unittest.TestCase):
         powers = cc.EvalFEFuncBootstrapPrecompute(ct, COEFFICIENTS)
         with self.assertRaisesRegex(RuntimeError, "different CryptoContext"):
             other.EvalFEFuncBootstrapWithPrecomp(powers, COEFFICIENTS)
-        with self.assertRaises(RuntimeError):
-            cc.EvalBootstrapSetup([3, 2], [0, 0], 8)
-        with self.assertRaises(RuntimeError):
-            cc.EvalBootstrap(ct)
+        # Standard bootstrapping can share the slot count with FE-FBT; StC-first still cannot,
+        # since it would replace the standard setup.
+        cc.EvalBootstrapSetup([3, 2], [0, 0], 8)
+        with self.assertRaisesRegex(RuntimeError, "setup conflict"):
+            cc.EvalBootstrapSetup([3, 2], [0, 0], 8, btsfirstboot=True)
         for budget, coefficients in (([], COEFFICIENTS), ([3, 2], [])):
             with self.assertRaises(RuntimeError):
                 fhe.CryptoContext.GetFEFBTDepth(budget, coefficients)
@@ -192,6 +193,9 @@ class FunctionalBootstrapTest(unittest.TestCase):
             invalid.EvalFEFuncBootstrapSetup([3, 2], [0, 0], 8)
         cc.SetDevices(DEVICES)
         cc.LoadContext(keys.publicKey)
+        # The standard setup came after EvalBootstrapKeyGen, so the device has no keys for it.
+        with self.assertRaisesRegex(RuntimeError, "EvalBootstrapKeyGen"):
+            cc.EvalBootstrap(ct)
         with self.assertRaisesRegex(RuntimeError, "already loaded"):
             cc.EvalFEFuncBootstrapSetup([3, 2], [0, 0], 8)
 
