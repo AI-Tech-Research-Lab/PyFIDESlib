@@ -311,7 +311,7 @@ The `examples/` directory has, in order:
 
 ## GPU plaintext encoding
 
-Contexts made by `GenCryptoContext` finish CKKS plaintext encoding on the GPU. Turn it off with
+Contexts with devices finish CKKS plaintext encoding on the GPU by default. Turn it off with
 `cc.SetGPUPlaintextEncoding(False)`; `cc.GetGPUPlaintextEncoding()` reports the setting.
 `MakeCKKSPackedPlaintext` and `MakeCKKSPackedPlaintextF64` then only run the part of OpenFHE's
 encoding that every RNS limb shares on the CPU: the IFFT over the slots, then scaling and

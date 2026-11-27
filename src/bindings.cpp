@@ -492,8 +492,8 @@ PYBIND11_MODULE(_core, m) {
 		// cache evicted it -- in every case the next operation re-uploads it.
 		.def("IsLoadedOnDevice", [](const PlaintextImpl& pt) { return pt.loaded; })
 		// Whether this plaintext finishes its encoding on the GPU: made while the context's
-		// SetGPUPlaintextEncoding was on (the default here) and accepted by that path.
-		.def("IsGPUEncoded", [](const PlaintextImpl& pt) { return pt.coefficients != nullptr; })
+		// SetGPUPlaintextEncoding was on (the default) and accepted by that path.
+		.def("IsGPUEncoded", &PlaintextImpl::HasGPUEncoding)
 		.def("__str__", [](const PlaintextImpl& pt) {
 			std::ostringstream os;
 			os << pt;
@@ -559,7 +559,7 @@ PYBIND11_MODULE(_core, m) {
 		.def("SetDevices", &CC::SetDevices, py::arg("devices"))
 		.def("SetAutoLoadPlaintexts", &CC::SetAutoLoadPlaintexts)
 		.def("SetAutoLoadCiphertexts", &CC::SetAutoLoadCiphertexts)
-		// GPU plaintext encoding, on by default for contexts made by GenCryptoContext here.
+		// GPU plaintext encoding, on by default (FIDESlib's default).
 		// MakeCKKSPackedPlaintext* then only runs the IFFT and rounding on the CPU (the GIL is
 		// released for it), and the first use of the plaintext -- or its reload after a plaintext
 		// cache eviction -- uploads one vector of 2*slots integers and reduces it modulo each
@@ -1051,13 +1051,7 @@ PYBIND11_MODULE(_core, m) {
 		"Serialize the current CPU/GPU ciphertext value, including its context, without a secret key.", nogil);
 
 	m.def(
-		"GenCryptoContext",
-		[](Params& params) {
-			auto cc = GenCryptoContext(params);
-			cc->SetGPUPlaintextEncoding(true); // see CryptoContext.SetGPUPlaintextEncoding
-			return cc;
-		},
-		py::arg("params"), nogil);
+		"GenCryptoContext", [](Params& params) { return GenCryptoContext(params); }, py::arg("params"), nogil);
 
 	m.def(
 		"GetChebyshevCoefficients",
