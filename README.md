@@ -309,6 +309,40 @@ The `examples/` directory has, in order:
 - `04_bootstrap.py`, bootstrapping and the parameters it requires;
 - `05_convolution.py`, three ways to evaluate a cyclic convolution.
 
+## GPU plaintext encoding
+
+Contexts made by `GenCryptoContext` finish CKKS plaintext encoding on the GPU. Turn it off with
+`cc.SetGPUPlaintextEncoding(False)`; `cc.GetGPUPlaintextEncoding()` reports the setting.
+`MakeCKKSPackedPlaintext` and `MakeCKKSPackedPlaintextF64` then only run the part of OpenFHE's
+encoding that every RNS limb shares on the CPU: the IFFT over the slots, then scaling and
+rounding to `2*slots` integers. That part takes about 1 ms. The plaintext keeps those
+integers. Its first use, or its reload after a plaintext-cache eviction, uploads them once.
+The GPU then reduces them modulo each prime and takes the NTT. The device plaintext is bit-identical to the
+CPU encoding's, so results do not change. Host memory is 8 bytes per coefficient instead of a
+full-ring element per limb.
+
+At logN=17, 59-bit primes, FLEXIBLEAUTOEXT and 32768 slots, measured on an H100 with
+`OMP_NUM_THREADS=1` (times per plaintext unless noted):
+
+| Limbs | Encoding | `MakeCKKSPackedPlaintextF64`, 1 thread | 513 plaintexts, 16 threads | First load | Reload |
+|---|---|---:|---:|---:|---:|
+| 28 | CPU | 76.1 ms | 2.83 s | 10.2 ms | 10.2 ms |
+| 28 | GPU | 1.4 ms | 0.24 s | 0.48 ms | 0.45 ms |
+| 9 | CPU | 26.7 ms | 0.89 s | 3.2 ms | 3.1 ms |
+| 9 | GPU | 0.9 ms | 0.05 s | 0.21 ms | 0.19 ms |
+
+Things to know:
+- **Encoding can still run in worker threads.** `MakeCKKSPackedPlaintext*` does no GPU work
+  and releases the GIL while it encodes. The GPU work happens in the thread that uses the plaintext,
+  as uploads did before.
+- **`Encrypt` of such a plaintext encodes it on the CPU** at that point, once. Encryption costs
+  what it did before; only the moment the encoding is paid changes.
+- `pt.IsGPUEncoded()` tells whether a plaintext took this path. A context without devices, and
+  any input OpenFHE rejects, uses the CPU encoding with the same errors.
+
+`python tests/test_gpu_plaintext_encoding.py` compares results with both encodings bit for bit.
+FIDESlib's `GpuPlaintextEncodingTests` compare the device limbs directly.
+
 ## VRAM cache
 
 Four independent caches each cap the VRAM used by one kind of object. Every cache keeps the

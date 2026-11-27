@@ -20,8 +20,9 @@ if (NOT DEFINED FIDESLIB_REPOSITORY)
 endif ()
 if (NOT DEFINED FIDESLIB_GIT_TAG)
     # FIDESlib 2.2.0 / patched OpenFHE 1.6.1, with FE functional bootstrapping, VRAM caches and the
-    # OpenFHE EvalSum family; standard and FE functional bootstrapping can share a slot count.
-    set(FIDESLIB_GIT_TAG "12d31767dde1ba149997699699c36866cb634a39")
+    # OpenFHE EvalSum family; standard and FE functional bootstrapping can share a slot count;
+    # CKKS plaintext encoding can finish on the GPU (SetGPUPlaintextEncoding).
+    set(FIDESLIB_GIT_TAG "2171e92e3886f84e21680a19d08afa41ba338f20")
 endif ()
 
 # Library only: skip FIDESlib's own test/benchmark suites (and their gtest/benchmark fetches).

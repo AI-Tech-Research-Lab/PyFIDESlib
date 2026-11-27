@@ -491,6 +491,9 @@ PYBIND11_MODULE(_core, m) {
 		// (plaintexts upload lazily), after UnloadFromDevice(), and after the plaintext
 		// cache evicted it -- in every case the next operation re-uploads it.
 		.def("IsLoadedOnDevice", [](const PlaintextImpl& pt) { return pt.loaded; })
+		// Whether this plaintext finishes its encoding on the GPU: made while the context's
+		// SetGPUPlaintextEncoding was on (the default here) and accepted by that path.
+		.def("IsGPUEncoded", [](const PlaintextImpl& pt) { return pt.coefficients != nullptr; })
 		.def("__str__", [](const PlaintextImpl& pt) {
 			std::ostringstream os;
 			os << pt;
@@ -556,6 +559,17 @@ PYBIND11_MODULE(_core, m) {
 		.def("SetDevices", &CC::SetDevices, py::arg("devices"))
 		.def("SetAutoLoadPlaintexts", &CC::SetAutoLoadPlaintexts)
 		.def("SetAutoLoadCiphertexts", &CC::SetAutoLoadCiphertexts)
+		// GPU plaintext encoding, on by default for contexts made by GenCryptoContext here.
+		// MakeCKKSPackedPlaintext* then only runs the IFFT and rounding on the CPU (the GIL is
+		// released for it), and the first use of the plaintext -- or its reload after a plaintext
+		// cache eviction -- uploads one vector of 2*slots integers and reduces it modulo each
+		// prime and takes the NTT on the GPU. The device plaintext is bit-identical to the CPU
+		// encoding's; the per-limb work, nearly all of the encoding time, leaves the CPU, and the
+		// host keeps 8 bytes per coefficient instead of a full-ring element per limb. Encrypt()
+		// of such a plaintext encodes it on the CPU at that point. Turning it off affects only
+		// plaintexts made afterwards.
+		.def("SetGPUPlaintextEncoding", &CC::SetGPUPlaintextEncoding, py::arg("enable"))
+		.def("GetGPUPlaintextEncoding", &CC::GetGPUPlaintextEncoding)
 		// Keys
 		.def("KeyGen", &CC::KeyGen, nogil)
 		.def("EvalMultKeyGen", &CC::EvalMultKeyGen, py::arg("privateKey"), nogil)
@@ -652,8 +666,10 @@ PYBIND11_MODULE(_core, m) {
 		// weights, convolution kernels) pins one device copy per entry -- tens of GB for a
 		// few thousand plaintexts at logN=16. A byte budget keeps only the most recently used
 		// ones resident and drops the rest; the next op that needs one re-uploads it from the
-		// host-side encoding the Plaintext carries anyway (a few ms), so a miss costs one
-		// host->device copy of unchanged data and nothing else -- plaintexts are read-only in
+		// host-side encoding the Plaintext carries anyway (a few ms; with GPU plaintext
+		// encoding, one copy of 2*slots integers plus the GPU's reduction and NTT, well under
+		// a millisecond), so a miss costs one host->device copy of unchanged data and nothing
+		// else -- plaintexts are read-only in
 		// every op that takes one, which is why (unlike a ciphertext) eviction needs no
 		// snapshot, no device sync and no host RAM.
 		//
@@ -1035,7 +1051,13 @@ PYBIND11_MODULE(_core, m) {
 		"Serialize the current CPU/GPU ciphertext value, including its context, without a secret key.", nogil);
 
 	m.def(
-		"GenCryptoContext", [](Params& params) { return GenCryptoContext(params); }, py::arg("params"), nogil);
+		"GenCryptoContext",
+		[](Params& params) {
+			auto cc = GenCryptoContext(params);
+			cc->SetGPUPlaintextEncoding(true); // see CryptoContext.SetGPUPlaintextEncoding
+			return cc;
+		},
+		py::arg("params"), nogil);
 
 	m.def(
 		"GetChebyshevCoefficients",
